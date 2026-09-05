@@ -8,7 +8,9 @@ from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
-from .models import Template, Revision
+from django.db.models import Q
+from django.utils import timezone
+from .models import Template, Revision, PendingImport
 from .services import normalize,serialize,snapshot,plain,propose,tokens,warnings
 
 @login_required
@@ -26,7 +28,7 @@ def api(methods):
                 data=json.loads(request.body) if request.body else {}
                 if not isinstance(data,dict): raise ValueError('Expected JSON object.')
                 return fn(request,data,*args,**kwargs)
-            except Template.DoesNotExist: return JsonResponse({'error':'Template not found.'},status=404)
+            except (Template.DoesNotExist,PendingImport.DoesNotExist): return JsonResponse({'error':'Not found.'},status=404)
             except (ValueError,TypeError,KeyError,signing.BadSignature) as e: return JsonResponse({'error':str(e) if isinstance(e,ValueError) else 'Invalid request or expired review.'},status=400)
         return wrapped
     return deco
@@ -57,7 +59,8 @@ def templates(request,data):
         if tag and tag not in [x.casefold() for x in t.tags]: continue
         if request.GET.get('favorite')=='1' and not t.favorite: continue
         result.append(serialize(t))
-    return JsonResponse({'items':result})
+    pending=PendingImport.objects.filter(owner=request.user,imported_at__isnull=True,dismissed=False).count()
+    return JsonResponse({'items':result,'pending_imports':pending})
 
 @api(['GET','PUT','DELETE'])
 def detail(request,data,pk):
@@ -144,19 +147,79 @@ def import_data(request,data):
 @api(['GET'])
 def status(request,data): return JsonResponse({'provider':settings.AI_PROVIDER,'model':settings.AI_MODEL,'configured':settings.AI_PROVIDER=='mock' or bool(settings.AI_API_KEY and settings.AI_BASE_URL and settings.AI_MODEL),'username':request.user.username})
 
+def pending_row(row):
+    return {'id':row.pk,'name':row.name,'text':row.text,'html':row.html,'flags':row.flags,'chars':len(row.text),'source_name':row.source_name,'batch':row.batch,'order':row.order}
+
+def pending_counts(user):
+    base=PendingImport.objects.filter(owner=user)
+    return {'pending':base.filter(imported_at__isnull=True,dismissed=False).count(),
+            'imported':base.filter(imported_at__isnull=False).count(),
+            'dismissed':base.filter(imported_at__isnull=True,dismissed=True).count()}
+
 def import_pdf(request):
     # Multipart upload, so this bypasses the JSON @api wrapper but keeps auth, method and CSRF checks.
     if not request.user.is_authenticated: return JsonResponse({'error':'Login required.'},status=401)
     if request.method!='POST': return JsonResponse({'error':'Method not allowed.'},status=405)
+    import hashlib, uuid
+    from django.utils.text import get_valid_filename
     from .pdfimport import parse_pdf, MAX_PDF_BYTES
     upload=request.FILES.get('file')
     if not upload: return JsonResponse({'error':'Attach a PDF file.'},status=400)
     if upload.size>MAX_PDF_BYTES: return JsonResponse({'error':'The PDF exceeds the 25 MB import limit.'},status=400)
+    source_name=get_valid_filename(upload.name or 'upload.pdf')[:200]
     data=upload.read()
     try:
         segments=parse_pdf(data)
     except ValueError as e:
         return JsonResponse({'error':str(e)},status=400)
     finally:
-        del data  # extracted text and the file bytes are never persisted or logged
-    return JsonResponse({'segments':segments,'count':len(segments)})
+        del data  # the PDF bytes are never persisted or logged
+    # Persist the parsed phrases as an owner-scoped import queue; dedupe against
+    # everything this owner has ever queued so re-uploading the same PDF is a no-op.
+    seen={h for h in PendingImport.objects.filter(owner=request.user).values_list('text_hash',flat=True)}
+    batch=uuid.uuid4().hex; added=0; skipped=0
+    with transaction.atomic():
+        for i,seg in enumerate(segments):
+            h=hashlib.sha256((seg['name']+'\x00'+seg['text']).encode('utf-8')).hexdigest()
+            if h in seen: skipped+=1; continue
+            seen.add(h)
+            PendingImport.objects.create(owner=request.user,batch=batch,source_name=source_name,name=seg['name'][:200],
+                text=seg['text'],html=seg['html'],flags=seg['flags'],order=i,text_hash=h)
+            added+=1
+    return JsonResponse({'added':added,'skipped':skipped,'counts':pending_counts(request.user)})
+
+@api(['GET'])
+def imports_list(request,data):
+    rows=PendingImport.objects.filter(owner=request.user,imported_at__isnull=True)
+    rows=rows.filter(dismissed=(request.GET.get('dismissed')=='1'))
+    return JsonResponse({'items':[pending_row(r) for r in rows],'counts':pending_counts(request.user)})
+
+@api(['POST'])
+def import_resolve(request,data,pk):
+    row=PendingImport.objects.get(pk=pk,owner=request.user)
+    action=data.get('action')
+    if action=='dismiss':
+        row.dismissed=True; row.save(update_fields=['dismissed'])
+    elif action=='restore':
+        row.dismissed=False; row.imported_at=None; row.imported_template=None
+        row.save(update_fields=['dismissed','imported_at','imported_template'])
+    elif action=='imported':
+        tid=data.get('template_id')
+        row.imported_template=Template.objects.filter(pk=tid,owner=request.user).first() if tid is not None else None
+        row.imported_at=timezone.now(); row.dismissed=False
+        row.save(update_fields=['imported_at','imported_template','dismissed'])
+    else:
+        raise ValueError('Unknown action.')
+    return JsonResponse({'ok':True,'counts':pending_counts(request.user)})
+
+@api(['POST'])
+def imports_clear(request,data):
+    scope=data.get('scope','resolved')
+    rows=PendingImport.objects.filter(owner=request.user)
+    if scope=='resolved': rows=rows.filter(Q(imported_at__isnull=False)|Q(dismissed=True))
+    elif scope=='batch':
+        if not data.get('batch'): raise ValueError('A batch is required.')
+        rows=rows.filter(batch=data['batch'])
+    elif scope!='all': raise ValueError('Unknown scope.')
+    deleted=rows.delete()[0]
+    return JsonResponse({'deleted':deleted,'counts':pending_counts(request.user)})

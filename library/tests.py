@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from .models import Template, Revision
+from .models import Template, Revision, PendingImport
 from .services import tokens, clean, propose
 
 class Workflows(TestCase):
@@ -147,6 +147,7 @@ class PdfImport(TestCase):
         cache.clear()
         self.user=get_user_model().objects.create_user('owner',password='synthetic-test-password')
         self.client.force_login(self.user)
+        self.b=self.client.post('/api/templates/',data=json.dumps({'title':'Existing','content':'<p>x</p>'}),content_type='application/json').json()
 
     def test_split_segments_and_flags(self):
         from .pdfimport import split_segments, flags_for
@@ -169,22 +170,61 @@ class PdfImport(TestCase):
         self.assertIn('<p>Line two</p>',html)
         self.assertIn('&lt;script&gt;',html); self.assertNotIn('<script>',html)
 
-    def test_import_pdf_endpoint(self):
+    def upload(self,lines=None):
+        return self.client.post('/api/import/pdf/',{'file':__import__('io').BytesIO(tiny_pdf(lines or self.LINES))})
+
+    def test_import_pdf_builds_persistent_queue(self):
         before=Template.objects.count()
-        r=self.client.post('/api/import/pdf/',{'file':__import__('io').BytesIO(tiny_pdf(self.LINES))})
+        r=self.upload()
         self.assertEqual(r.status_code,200,r.content)
-        body=r.json()
-        self.assertEqual(body['count'],len(body['segments']))
-        self.assertEqual([s['name'] for s in body['segments']],['','ASLIBTPVSTR','ASDCINSTRUCTIONSRALP','ASLIBPLAINTEXT'])
-        self.assertIn('You may shower',body['segments'][2]['text'])
-        self.assertTrue(body['segments'][2]['html'].startswith('<p>'))
-        self.assertEqual(Template.objects.count(),before)  # parsing persists nothing
+        self.assertEqual(r.json()['added'],4)
+        self.assertEqual(r.json()['counts']['pending'],4)
+        self.assertEqual(Template.objects.count(),before)  # queue, not templates
+        rows=PendingImport.objects.filter(owner=self.user).order_by('order')
+        self.assertEqual([x.name for x in rows],['','ASLIBTPVSTR','ASDCINSTRUCTIONSRALP','ASLIBPLAINTEXT'])
+        self.assertIn('You may shower',rows[2].text)
+        # Re-uploading the same PDF adds nothing.
+        r2=self.upload()
+        self.assertEqual((r2.json()['added'],r2.json()['skipped']),(0,4))
+        self.assertEqual(PendingImport.objects.filter(owner=self.user).count(),4)
         self.assertEqual(self.client.get('/api/import/pdf/').status_code,405)
+
+    def test_queue_list_skip_import_restore_clear(self):
+        self.upload()
+        listed=self.client.get('/api/imports/').json()
+        self.assertEqual(len(listed['items']),4)
+        tp=next(i for i in listed['items'] if i['name']=='ASLIBTPVSTR')
+        # Skip one -> leaves the default queue, still counted as dismissed.
+        self.client.post('/api/imports/%d/resolve/'%tp['id'],data=json.dumps({'action':'dismiss'}),content_type='application/json')
+        self.assertEqual(len(self.client.get('/api/imports/').json()['items']),3)
+        self.assertEqual(len(self.client.get('/api/imports/?dismissed=1').json()['items']),1)
+        # Restore it.
+        self.client.post('/api/imports/%d/resolve/'%tp['id'],data=json.dumps({'action':'restore'}),content_type='application/json')
+        self.assertEqual(len(self.client.get('/api/imports/').json()['items']),4)
+        # Mark another imported, linked to a real template.
+        other=next(i for i in listed['items'] if i['name']=='ASLIBPLAINTEXT')
+        self.client.post('/api/imports/%d/resolve/'%other['id'],data=json.dumps({'action':'imported','template_id':self.b['id']}),content_type='application/json')
+        counts=self.client.get('/api/imports/').json()['counts']
+        self.assertEqual((counts['pending'],counts['imported']),(3,1))
+        self.assertEqual(self.client.get('/api/templates/').json()['pending_imports'],3)
+        # Clearing resolved drops the imported row; skipped none remain.
+        cleared=self.client.post('/api/imports/clear/',data=json.dumps({'scope':'resolved'}),content_type='application/json').json()
+        self.assertEqual(cleared['deleted'],1)
+        self.assertEqual(PendingImport.objects.filter(owner=self.user).count(),3)
+
+    def test_queue_is_owner_scoped(self):
+        self.upload()
+        self.client.force_login(get_user_model().objects.create_user('intruder'))
+        self.assertEqual(self.client.get('/api/imports/').json()['items'],[])
+        rid=PendingImport.objects.first().pk
+        self.assertEqual(self.client.post('/api/imports/%d/resolve/'%rid,data=json.dumps({'action':'dismiss'}),content_type='application/json').status_code,404)
 
     def test_import_pdf_rejects_bad_input_and_anonymous(self):
         self.assertEqual(self.client.post('/api/import/pdf/',{}).status_code,400)
         r=self.client.post('/api/import/pdf/',{'file':__import__('io').BytesIO(b'this is not a pdf at all')})
         self.assertEqual(r.status_code,400)
         self.assertIn('PDF',r.json()['error'])
+        self.assertEqual(PendingImport.objects.count(),0)
         guest=Client()
         self.assertEqual(guest.post('/api/import/pdf/',{}).status_code,401)
+        self.assertEqual(guest.get('/api/imports/').status_code,401)
