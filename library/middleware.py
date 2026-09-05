@@ -1,0 +1,17 @@
+from django.core.cache import cache
+from django.http import JsonResponse
+
+class PrivacyMiddleware:
+    def __init__(self,get_response): self.get_response=get_response
+    def __call__(self,request):
+        if request.method == 'POST' and request.path in ['/login/','/api/propose/']:
+            identity = str(request.user.pk) if request.user.is_authenticated else request.META.get('REMOTE_ADDR','unknown')
+            key = 'limit:'+request.path+identity
+            cache.add(key,0,60)
+            if cache.incr(key) > (10 if request.path == '/login/' else 20):
+                return JsonResponse({'error':'Rate limit reached. Try again in one minute.'},status=429)
+        response=self.get_response(request)
+        response['Cache-Control']='no-store, private'
+        response['X-Frame-Options']='DENY'
+        response['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        return response

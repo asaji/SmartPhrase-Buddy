@@ -1,0 +1,10 @@
+.venv/
+.local-secret
+*.sqlite3*
+.env
+__pycache__/
+staticfiles/
+.playwright/
+test-results/
+
+node_modules/
