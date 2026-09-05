@@ -34,12 +34,15 @@ SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = SECURE_SSL_REDIRECT = PRODUCTION
 SECURE_HSTS_SECONDS = 31536000 if PRODUCTION else 0
 CSRF_TRUSTED_ORIGINS = list(filter(None,os.environ.get('CSRF_TRUSTED_ORIGINS','').split(',')))
 DATA_UPLOAD_MAX_MEMORY_SIZE = 2_000_000
+# Keep uploaded PDFs in memory (never spilled to a temp file) for the import parser.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 26_214_400
+FILE_UPLOAD_HANDLERS = ['django.core.files.uploadhandler.MemoryFileUploadHandler']
 AUTH_PASSWORD_VALIDATORS = [{'NAME':'django.contrib.auth.password_validation.MinimumLengthValidator'},{'NAME':'django.contrib.auth.password_validation.CommonPasswordValidator'}]
 AI_PROVIDER = os.environ.get('AI_PROVIDER','mock')
 AI_MODEL = os.environ.get('AI_MODEL','')
 AI_API_KEY = os.environ.get('AI_API_KEY','')
 AI_BASE_URL = os.environ.get('AI_BASE_URL','')
-LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'null':{'class':'logging.NullHandler'}},'loggers':{'django.request':{'handlers':['null'],'propagate':False},'httpx':{'handlers':['null'],'propagate':False}}}
+LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'null':{'class':'logging.NullHandler'}},'loggers':{'django.request':{'handlers':['null'],'propagate':False},'httpx':{'handlers':['null'],'propagate':False},'pypdf':{'handlers':['null'],'propagate':False}}}
 
 if PRODUCTION:
     if not os.environ.get('DJANGO_SECRET_KEY'):

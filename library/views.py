@@ -143,3 +143,20 @@ def import_data(request,data):
 
 @api(['GET'])
 def status(request,data): return JsonResponse({'provider':settings.AI_PROVIDER,'model':settings.AI_MODEL,'configured':settings.AI_PROVIDER=='mock' or bool(settings.AI_API_KEY and settings.AI_BASE_URL and settings.AI_MODEL),'username':request.user.username})
+
+def import_pdf(request):
+    # Multipart upload, so this bypasses the JSON @api wrapper but keeps auth, method and CSRF checks.
+    if not request.user.is_authenticated: return JsonResponse({'error':'Login required.'},status=401)
+    if request.method!='POST': return JsonResponse({'error':'Method not allowed.'},status=405)
+    from .pdfimport import parse_pdf, MAX_PDF_BYTES
+    upload=request.FILES.get('file')
+    if not upload: return JsonResponse({'error':'Attach a PDF file.'},status=400)
+    if upload.size>MAX_PDF_BYTES: return JsonResponse({'error':'The PDF exceeds the 25 MB import limit.'},status=400)
+    data=upload.read()
+    try:
+        segments=parse_pdf(data)
+    except ValueError as e:
+        return JsonResponse({'error':str(e)},status=400)
+    finally:
+        del data  # extracted text and the file bytes are never persisted or logged
+    return JsonResponse({'segments':segments,'count':len(segments)})

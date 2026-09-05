@@ -112,3 +112,79 @@ class Workflows(TestCase):
             with patch('library.services.httpx.Client') as client:
                 client.return_value.__enter__.return_value.post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(output)}}]}
                 with self.assertRaises(ValueError):propose('<p>Difficult dissection.</p>','Reflect scarring.')
+
+
+def tiny_pdf(lines):
+    """Minimal single-page PDF whose text pypdf can extract. Test fixture only."""
+    import io
+    def esc(s): return s.replace('\\','\\\\').replace('(','\\(').replace(')','\\)')
+    content='BT /F1 11 Tf 54 760 Td 13 TL\n'+''.join('(%s) Tj T*\n'%esc(l) for l in lines)+'ET'
+    cb=content.encode('latin-1')
+    objs=[b'<< /Type /Catalog /Pages 2 0 R >>',
+          b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+          b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+          b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+          b'<< /Length %d >>\nstream\n'%len(cb)+cb+b'\nendstream']
+    out=io.BytesIO(); out.write(b'%PDF-1.4\n'); offs=[]
+    for i,o in enumerate(objs,1):
+        offs.append(out.tell()); out.write(b'%d 0 obj\n'%i+o+b'\nendobj\n')
+    xref=out.tell(); out.write(b'xref\n0 %d\n0000000000 65535 f \n'%(len(objs)+1))
+    for off in offs: out.write(b'%010d 00000 n \n'%off)
+    out.write(b'trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF'%(len(objs)+1,xref))
+    return out.getvalue()
+
+
+class PdfImport(TestCase):
+    # An unnamed lead segment, two named phrases, a wrapped ALL-CAPS content line
+    # that must NOT be treated as a new phrase, an age line, and a token-free phrase.
+    LINES=['UROLOGY: Established Patient Follow-Up','Patient: @NAME@','@NAME@ is a 62 year old man.',
+           ' ','ASLIBTPVSTR','Transperineal versus transrectal biopsy counseling.','Risks discussed ***.',
+           ' ','ASDCINSTRUCTIONSRALP','DISCHARGE INSTRUCTIONS FOLLOWING ROBOTIC ASSISTED RADICAL ',
+           'PROSTATECTOMY','- You may shower','- Drink plenty of water',
+           ' ','ASLIBPLAINTEXT','This phrase has no Epic tokens at all.']
+
+    def setUp(self):
+        cache.clear()
+        self.user=get_user_model().objects.create_user('owner',password='synthetic-test-password')
+        self.client.force_login(self.user)
+
+    def test_split_segments_and_flags(self):
+        from .pdfimport import split_segments, flags_for
+        segs=split_segments('\n'.join(self.LINES))
+        self.assertEqual([s['name'] for s in segs],[None,'ASLIBTPVSTR','ASDCINSTRUCTIONSRALP','ASLIBPLAINTEXT'])
+        self.assertIn('Established Patient Follow-Up',segs[0]['text'])
+        # Wrapped ALL-CAPS content line stays inside its phrase, not split off.
+        self.assertIn('PROSTATECTOMY',segs[2]['text'])
+        self.assertIn('You may shower',segs[2]['text'])
+        self.assertTrue(any('fixed patient age' in f.lower() for f in flags_for(None,segs[0]['text'])))
+        self.assertTrue(any('no epic tokens' in f.lower() for f in flags_for('ASLIBPLAINTEXT',segs[3]['text'])))
+        self.assertTrue(any('no smartphrase name' in f.lower() for f in flags_for(None,segs[0]['text'])))
+
+    def test_text_to_html_is_conservative_and_escaped(self):
+        from .pdfimport import text_to_html
+        self.assertEqual(text_to_html('- a\n- b'),'<ul><li>a</li><li>b</li></ul>')
+        html=text_to_html('Indication for Procedure:\nLine two\n\nNext para <script>alert(1)</script>')
+        # One <p> per line so the Epic-header split lands on a real node boundary.
+        self.assertIn('<p>Indication for Procedure:</p>',html)
+        self.assertIn('<p>Line two</p>',html)
+        self.assertIn('&lt;script&gt;',html); self.assertNotIn('<script>',html)
+
+    def test_import_pdf_endpoint(self):
+        before=Template.objects.count()
+        r=self.client.post('/api/import/pdf/',{'file':__import__('io').BytesIO(tiny_pdf(self.LINES))})
+        self.assertEqual(r.status_code,200,r.content)
+        body=r.json()
+        self.assertEqual(body['count'],len(body['segments']))
+        self.assertEqual([s['name'] for s in body['segments']],['','ASLIBTPVSTR','ASDCINSTRUCTIONSRALP','ASLIBPLAINTEXT'])
+        self.assertIn('You may shower',body['segments'][2]['text'])
+        self.assertTrue(body['segments'][2]['html'].startswith('<p>'))
+        self.assertEqual(Template.objects.count(),before)  # parsing persists nothing
+        self.assertEqual(self.client.get('/api/import/pdf/').status_code,405)
+
+    def test_import_pdf_rejects_bad_input_and_anonymous(self):
+        self.assertEqual(self.client.post('/api/import/pdf/',{}).status_code,400)
+        r=self.client.post('/api/import/pdf/',{'file':__import__('io').BytesIO(b'this is not a pdf at all')})
+        self.assertEqual(r.status_code,400)
+        self.assertIn('PDF',r.json()['error'])
+        guest=Client()
+        self.assertEqual(guest.post('/api/import/pdf/',{}).status_code,401)

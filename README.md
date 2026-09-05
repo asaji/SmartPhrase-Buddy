@@ -40,12 +40,21 @@ npm run build
 - Persistent create/read/update/delete library; title, Epic name, type, tags, aliases, favorites, timestamp and revision metadata.
 - Search all requested fields; type/exact-tag/favorite filters, previews, rich/plain copying without AI.
 - Manual paste import review, preserved source, adjustable Epic header/narrative split, fixed-age flag.
+- Epic SmartPhrase **PDF import**: upload an Epic "print SmartPhrases" export, get one unapproved draft per detected phrase (name, extracted text, per-segment flags for letterhead / disclaimer / fixed age / missing tokens / bracket placeholders), then review and approve each through the normal flow. The PDF is parsed in memory and never stored or logged; nothing is silently repaired. See "PDF import" below.
 - Master editing, full revision history, restore as a new revision, stale-save protection.
 - Selected-template proposals, per-template text diff, manually editable proposal, explicit acceptance/rejection, scope enforcement and token-change review.
 - Separate in-memory operative drafts, iterative free-text AI instructions, manual editing, undo/redo, copy approval checkbox, Finish and clear, navigation warning.
 - JSON portable import/export with complete revision metadata and timestamps. Import adds independent copies; it never overwrites existing templates. Imports are atomic and capped at 500 templates / about 1.9 MB; use database restore for larger libraries.
 - Login/logout, password change, no public signup, authenticated API, ownership checks, CSRF, no-store responses, strict content security policy, request size limits, login/AI rate limits.
 - Configurable mock or HTTPS chat-completions-compatible AI provider, timeout and malformed-result handling, server-only secrets.
+
+## PDF import
+
+Many Epic builds let a user print/export their SmartPhrases to PDF. In **New phrase / import → Import from an Epic SmartPhrase PDF export**, choose that file. The server (`library/pdfimport.py`, using `pypdf`) extracts the selectable text and splits it into segments: a line that is only an uppercase token (`ASOPNSPRALP`, `ASLIBTPVSTR`, …) and is preceded by a blank line starts a new segment; text before the first such line becomes an unnamed segment. Each segment is returned with the detected name, the extracted text, a conservative plain-text→HTML rendering (one paragraph per line, bullet lists preserved — no headings or emphasis inferred), and review flags (letterhead lines, patient-facing disclaimer blocks, a fixed patient age, no Epic tokens detected, `[ … ]` bracket placeholders).
+
+"Load this phrase for review" drops one segment into the import source editor and prefills the title/Epic name; you then set type/tags, click **Use pasted source**, adjust the Epic header boundary, and **Approve** — exactly as for pasted text. The split is best effort: names stay editable, an over-split segment is just extra text you can move, and ALL-CAPS lines inside content (wrapped headings, `NOTES`, `MONITORING`) are deliberately not treated as new phrases when they are not preceded by a blank line.
+
+Privacy: the upload is held in memory only (`FILE_UPLOAD_HANDLERS` is memory-only, 25 MB cap), parsed, and discarded — no PDF, extracted text, or segment list is written to the database, session, browser storage, or logs. `pypdf` logging is routed to a null handler. Scanned image-only PDFs (no text layer) are rejected with guidance rather than OCR'd.
 
 ## AI configuration and limitations
 
@@ -71,7 +80,7 @@ python manage.py check
 python scripts/browser_smoke.py
 ```
 
-Backend tests exercise search dimensions, authentication/ownership/CSRF, temporary cases leaving master/history unchanged, case header exclusion in UI-shaped requests, selected scope, rejection/no-save, approval/restore/stale checks, unfamiliar tokens and explicit removal review, AI failure and malformed response handling, conservative conflict/time checks, export/import metadata equivalence/atomic rollback, safe rendering and rate limits.
+Backend tests exercise search dimensions, authentication/ownership/CSRF, temporary cases leaving master/history unchanged, case header exclusion in UI-shaped requests, selected scope, rejection/no-save, approval/restore/stale checks, unfamiliar tokens and explicit removal review, AI failure and malformed response handling, conservative conflict/time checks, export/import metadata equivalence/atomic rollback, safe rendering and rate limits, and PDF SmartPhrase extraction (segment splitting, false-positive ALL-CAPS lines, review flags, conservative HTML, endpoint auth/method/no-persistence, non-PDF rejection).
 
 Browser smoke tests create and delete a random synthetic account. They exercise sign-in, import, narrative split, manual revision, plain/HTML clipboard, case customization, accepted proposal, draft clear, selected master approval, responsive width and settings, and assert no browser storage or JavaScript errors. Screenshots are written to `/private/tmp` for local review. Run against a development database only.
 
@@ -109,4 +118,4 @@ Use synthetic material in your own Epic environment:
 
 ## Deferred
 
-Screenshot/OCR extraction; saved case histories; reusable case-variation saving; shared-section propagation; Epic integration; MFA/SSO and formal production security review; real-provider integration/evaluation; domain deployment and actual Epic paste verification. No exact clinical contents were fabricated from missing screenshots.
+Screenshot/OCR extraction (image-only PDFs and screenshots; text-based Epic PDF export is implemented); saved case histories; reusable case-variation saving; shared-section propagation; Epic integration; MFA/SSO and formal production security review; real-provider integration/evaluation; domain deployment and actual Epic paste verification. No exact clinical contents were fabricated from missing screenshots.
