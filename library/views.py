@@ -103,6 +103,31 @@ def proposal(request,data):
     return JsonResponse({'proposals':outputs,'scope':scope,'provider':settings.AI_PROVIDER})
 
 @api(['POST'])
+def finalize(request,data):
+    """Line-by-line case completion for a transient operative draft. Persists nothing."""
+    from .services import clean, finalize_questions, finalize_apply
+    content=clean(data.get('content',''))
+    if not plain(content): raise ValueError('No narrative to finalize.')
+    if data.get('step')=='questions':
+        try:
+            return JsonResponse({'questions':finalize_questions(content),'provider':settings.AI_PROVIDER})
+        except Exception:
+            return JsonResponse({'error':'Could not build the AI checklist. The *** fill-ins are still listed for you.'},status=502)
+    answers=data.get('answers')
+    if not isinstance(answers,list) or not 1<=len(answers)<=60: raise ValueError('Provide 1–60 answered items.')
+    norm=[]
+    for a in answers:
+        if not isinstance(a,dict): raise ValueError('Invalid answer item.')
+        ans=str(a.get('answer','')).strip()
+        if ans: norm.append({'question':str(a.get('question',''))[:2000],'answer':ans[:5000]})
+    if not norm: raise ValueError('Answer at least one item.')
+    try:
+        result=finalize_apply(content,norm)
+    except Exception:
+        return JsonResponse({'error':'AI unavailable or returned an unsafe/invalid response. Your text is unchanged; continue manual editing.'},status=502)
+    return JsonResponse({'proposal':dict(result,source=content),'provider':settings.AI_PROVIDER})
+
+@api(['POST'])
 def approve(request,data):
     scope=signing.loads(data['scope'],salt='review',max_age=3600)
     if scope['user']!=request.user.pk or scope['mode']!='master': raise ValueError('Invalid review scope.')

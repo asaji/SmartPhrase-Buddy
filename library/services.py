@@ -96,20 +96,17 @@ def _parse_json(raw):
         if not match: raise ValueError('The AI response was not valid JSON.')
         return json.loads(match.group(0))
 
-def _chat_completion(source,instruction):
+CHECKLIST_CONTRACT = '''You help a surgeon finalise the operative note for one specific completed case before it is copied into the EHR for billing. You do NOT rewrite the note in this step. Read the whole narrative and produce concrete questions the surgeon should answer so nothing is missed. Cover: every unresolved *** fill-in (quote the sentence it sits in), default statements that may not apply to this case (laterality, nerve-sparing, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, implants/devices, hemostatic agents), and routinely documented items that appear to be missing. One concrete thing per question. Never ask the surgeon to supply operative time or billing/modifier justification. Respond with ONLY a JSON object (no prose, no code fences): {"questions": [strings]}.'''
+
+def _chat_json(system,user_obj):
     base=ai_base_url()
     if not settings.AI_API_KEY or not settings.AI_MODEL or not base.startswith('https://'): raise ValueError('AI provider is not configured.')
     headers={'Authorization':'Bearer '+settings.AI_API_KEY}
     if settings.AI_PROVIDER=='openrouter':
         headers['X-Title']=settings.AI_APP_TITLE or 'Phrasebook'
         if settings.AI_APP_URL: headers['HTTP-Referer']=settings.AI_APP_URL
-    user_message=json.dumps({
-        'task':'Revise the operative narrative in source_html according to editing_instruction. Return the complete revised narrative, every paragraph, with the change applied where it belongs — not appended, not summarised.',
-        'editing_instruction':instruction,
-        'source_html':source,
-    })
     with httpx.Client(timeout=90,follow_redirects=False) as client:
-        response=client.post(base.rstrip('/')+'/chat/completions',headers=headers,json={'model':settings.AI_MODEL,'temperature':0,'max_tokens':8192,'messages':[{'role':'system','content':CONTRACT},{'role':'user','content':user_message}]})
+        response=client.post(base.rstrip('/')+'/chat/completions',headers=headers,json={'model':settings.AI_MODEL,'temperature':0,'max_tokens':8192,'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(user_obj)}]})
         response.raise_for_status()
         payload=response.json()
     try:
@@ -118,17 +115,14 @@ def _chat_completion(source,instruction):
         raise ValueError('The AI response was missing content.')
     return _parse_json(message)
 
-def propose(source,instruction):
-    if settings.AI_PROVIDER=='mock':
-        content=source
-        questions=['MOCK provider: no clinical reasoning performed. Review all defaults and instructions manually.']
-        if re.search(r'inflammation.*scarring',instruction,re.I):
-            content += '<p>Significant periprostatic inflammation and scarring made dissection difficult.</p>'
-        else: questions.append('Mock leaves the source unchanged for this instruction. Edit manually or configure a real provider.')
-        result={'content':content,'summary':'MOCK demonstration only; supplied inflammation/scarring sentence appended when present.','questions':questions}
-    elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
-        result=_chat_completion(source,instruction)
-    else: raise ValueError('AI disabled. Manual editing remains available.')
+def _chat_completion(source,instruction):
+    return _chat_json(CONTRACT,{
+        'task':'Revise the operative narrative in source_html according to editing_instruction. Return the complete revised narrative, every paragraph, with the change applied where it belongs — not appended, not summarised.',
+        'editing_instruction':instruction,
+        'source_html':source,
+    })
+
+def _finish(source,instruction,result):
     if not isinstance(result,dict) or set(result) != {'content','summary','questions'}: raise ValueError('Invalid AI response.')
     if not isinstance(result['summary'],str) or len(result['summary'])>5000 or not isinstance(result['questions'],list) or len(result['questions'])>30 or any(not isinstance(q,str) or len(q)>2000 for q in result['questions']): raise ValueError('Invalid AI response.')
     result['content']=clean(result['content'])
@@ -142,3 +136,49 @@ def propose(source,instruction):
     claims=re.findall(r'\b\d+\s*(?:minutes?|hours?)\b|modifier\s*[- ]?22',plain(result['content']),re.I)
     if any(c.lower() not in (plain(source)+' '+instruction).lower() for c in claims): raise ValueError('AI introduced unsupported time or billing language. Original text preserved.')
     return result
+
+def propose(source,instruction):
+    if settings.AI_PROVIDER=='mock':
+        content=source
+        questions=['MOCK provider: no clinical reasoning performed. Review all defaults and instructions manually.']
+        if re.search(r'inflammation.*scarring',instruction,re.I):
+            content += '<p>Significant periprostatic inflammation and scarring made dissection difficult.</p>'
+        else: questions.append('Mock leaves the source unchanged for this instruction. Edit manually or configure a real provider.')
+        result={'content':content,'summary':'MOCK demonstration only; supplied inflammation/scarring sentence appended when present.','questions':questions}
+    elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
+        result=_chat_completion(source,instruction)
+    else: raise ValueError('AI disabled. Manual editing remains available.')
+    return _finish(source,instruction,result)
+
+def finalize_questions(source):
+    """Return targeted questions to walk the surgeon through finalising one case."""
+    if settings.AI_PROVIDER=='mock':
+        qs=[]
+        for m in re.finditer(r'[^.\n]*\*{3,}[^.\n]*',plain(source)):
+            snippet=re.sub(r'\s+',' ',m.group(0)).strip()
+            if snippet: qs.append('Fill-in: "'+snippet[:180]+'" — what did you do here?')
+        qs.append('MOCK provider: no clinical review. Also confirm laterality, node dissection extent, drains, specimens, blood loss, and any implants or hemostatic agents.')
+        return qs[:30]
+    if settings.AI_PROVIDER not in REMOTE_PROVIDERS: raise ValueError('AI disabled.')
+    result=_chat_json(CHECKLIST_CONTRACT,{'source_html':source})
+    qs=result.get('questions') if isinstance(result,dict) else None
+    if not isinstance(qs,list) or any(not isinstance(q,str) for q in qs): raise ValueError('Invalid AI response.')
+    return [q[:2000] for q in qs[:30]]
+
+def finalize_apply(source,answers):
+    """answers: [{'question': str, 'answer': str}]. Integrate them into the narrative."""
+    joined=' '.join(a.get('answer','') for a in answers)
+    if settings.AI_PROVIDER=='mock':
+        content=source
+        for a in answers:
+            content=content.replace('***',clean(a.get('answer','')) or '***',1)
+        result={'content':content,'summary':'MOCK: replaced *** placeholders in order with your answers; no clinical reasoning or phrasing.','questions':['MOCK provider — verify every substitution and its wording manually.']}
+    elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
+        result=_chat_json(CONTRACT,{
+            'task':'Finalise the operative narrative in source_html for one specific completed case using answered_checklist. Put each answer where it applies — usually replacing a *** fill-in or completing the sentence the question quoted. Phrase it to read naturally in the surgeon\'s voice. Return the COMPLETE narrative; change nothing else; invent nothing; keep every other token verbatim.',
+            'answered_checklist':answers,
+            'source_html':source,
+        })
+    else:
+        raise ValueError('AI disabled.')
+    return _finish(source,joined,result)

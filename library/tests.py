@@ -84,6 +84,27 @@ class Workflows(TestCase):
         self.assertTrue(any('complications' in w for w in r['warnings']))
         self.assertNotRegex(r['content'],r'\d+ minutes|modifier')
         self.assertEqual(tokens(r['content']),tokens(self.a['content']))
+
+    def test_finalize_line_by_line(self):
+        before=list(Template.objects.values()); hist=list(Revision.objects.values())
+        q=self.call('finalize/',{'content':self.a['content'],'step':'questions'})
+        self.assertEqual(q.status_code,200,q.content)
+        self.assertTrue(any('***' in s for s in q.json()['questions']))  # the fill-in is surfaced
+        a=self.call('finalize/',{'content':self.a['content'],'answers':[{'question':'Fill-in','answer':'Floseal was applied to the pedicle.'}]})
+        self.assertEqual(a.status_code,200,a.content)
+        p=a.json()['proposal']
+        self.assertEqual(set(p)>= {'content','summary','questions','warnings','source'},True)
+        self.assertIn('Floseal',p['content'])
+        self.assertNotIn('***',p['content'])            # the *** placeholder was consumed
+        self.assertEqual(before,list(Template.objects.values()))   # persists nothing
+        self.assertEqual(hist,list(Revision.objects.values()))
+        self.assertNotIn('Floseal',str(list(self.client.session.items())))
+
+    def test_finalize_validation_and_auth(self):
+        self.assertEqual(self.call('finalize/',{'content':'','step':'questions'}).status_code,400)
+        self.assertEqual(self.call('finalize/',{'content':self.a['content'],'answers':[]}).status_code,400)
+        self.assertEqual(self.call('finalize/',{'content':self.a['content'],'answers':[{'answer':'  '}]}).status_code,400)
+        self.assertEqual(Client().post('/api/finalize/',data='{}',content_type='application/json').status_code,401)
     def test_backup_roundtrip_and_atomic_failure(self):
         backup=self.client.get('/api/export/').json()
         response=self.call('import/',backup)
