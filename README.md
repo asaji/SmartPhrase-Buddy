@@ -24,7 +24,7 @@ python manage.py runserver 127.0.0.1:8765 --noreload
 
 Open http://127.0.0.1:8765 and sign in with the account you created. No default password or account is shipped. The superuser command is used for convenient initial provisioning; no Django admin endpoint is exposed. Do not create additional accounts for this single-user deployment.
 
-For a synthetic walkthrough: New phrase / import → Load synthetic example → Use pasted source → Suggest split → inspect both editors → check review confirmation → Approve import. To import your originals, paste them into the source editor and perform the same review, assign metadata/aliases, and adjust the header manually where necessary. Paragraphs, headings, emphasis and lists are supported; images, tables, links, arbitrary styling and active markup are deliberately not retained in editable content. Original source is stored separately as inert text.
+For a synthetic walkthrough: New phrase / import → Load synthetic example → Use pasted source → Split after Patient/MRN → inspect both editors → check review confirmation → Approve import. To import your originals, paste them into the source editor and perform the same review, assign metadata/aliases, and adjust the header manually where necessary. Paragraphs, headings, emphasis and lists are supported; images, tables, links, arbitrary styling and active markup are deliberately not retained in editable content. Original source is stored separately as inert text.
 
 Configuration is through environment variables. Copy `.env.example` to `.env` (git-ignored) and `manage.py` will load it for local runs — real environment variables still win, and `manage.py test` ignores `.env`. Production uses the systemd `EnvironmentFile` instead. The development secret is generated into the ignored `.local-secret`. SQLite defaults to ignored `private.sqlite3`. **This checkout is inside an iCloud folder: keep development synthetic, and set DATABASE_PATH to a private, approved, non-synchronized location before storing sensitive reusable content.** Backups/exports and original imports may contain sensitive information too.
 
@@ -95,6 +95,14 @@ Set `AI_PROVIDER=compatible`, `AI_BASE_URL` (HTTPS, e.g. ending in `/v1`), `AI_M
 ### Reviewing a proposal
 
 A proposal never changes anything on its own. The review card shows the change summary, any questions/warnings, and the **proposed narrative with additions highlighted and deletions struck through** (toggle **Show clean version** for the plain result). You can edit the proposed text inline before accepting. **Accept** applies it to the working draft (case) or saves it as a new master revision (selected-template update) only after you tick the review checkbox; **Reject** leaves saved content untouched. AI failure, timeout or a malformed/unsafe response returns a 502 with your text unchanged and manual editing still available.
+
+### Epic header boundary
+
+Epic imports only the **Date of Procedure** and **Patient/MRN** lines; everything from **`Surgeon:`** onward stays in the editable narrative so the AI can improve the whole note and a modifier-22 paragraph can sit above the indication. The master editor's boundary tools are **Split after Patient/MRN** (finds the first `Surgeon:` / `Attending` line) and **Split at Indication for Procedure** (the older behaviour); both editors stay hand-editable for other conventions. The excluded header never enters case AI requests or narrative copying.
+
+### Modifier 22
+
+The app is otherwise strict against inferred billing language — but a surgeon can deliberately add a **modifier-22 justification** for a specific case. In the case editor, *Modifier 22 statement* (collapsed by default) takes case-specific complexity factors and, optionally, the bracketed `[…]` hints from one of your own operative templates (e.g. `ASMOD22RALP`). `POST /api/mod22/` drafts one paragraph and inserts it **above the "Indication for Procedure" heading**, shown in the highlighted-diff review card. The `MOD22_CONTRACT` forbids inventing time, blood loss, BMI or any figure (a figure you supply is used verbatim; an invented one is rejected in `_finish(..., allow_billing=True)`) and forbids stating the case "qualifies for" the modifier — it lists the factors and leaves eligibility to the coder. A warning that the tool does not determine coding eligibility is always attached. Nothing here touches the master template or is persisted.
 
 ### Grammar check on master save
 

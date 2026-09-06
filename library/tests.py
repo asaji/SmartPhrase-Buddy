@@ -136,6 +136,39 @@ class Workflows(TestCase):
             out=grammar_pass(src)
         self.assertIn('@AGE@',out['content'])
         self.assertEqual(out['token_changes'],False)              # tokens unchanged -> no flag
+
+    def test_mod22_mock_placement_and_validation(self):
+        before=list(Template.objects.values())
+        r=self.call('mod22/',{'content':self.a['content'],'factors':'dense adhesions from prior open surgery; morbid obesity'})
+        self.assertEqual(r.status_code,200,r.content)
+        p=r.json()['proposal']
+        self.assertIn('Modifier 22',p['content'])
+        self.assertLess(p['content'].index('Modifier 22'),p['content'].index('Indication for Procedure'))  # above the indication
+        self.assertTrue(any('coding eligibility' in w for w in p['warnings']))
+        self.assertEqual(p['source'],self.a['content'])
+        self.assertEqual(before,list(Template.objects.values()))          # persists nothing
+        self.assertEqual(self.call('mod22/',{'content':self.a['content']}).status_code,400)   # no factors, no template
+        self.assertEqual(Client().post('/api/mod22/',data='{}',content_type='application/json').status_code,401)
+
+    def test_mod22_pulls_template_brackets(self):
+        tpl=self.create('Mod22 RALP',kind='operative',epic_name='ASMOD22RALP',content='<p>Consider [dense periprostatic adhesions] and [prior radiation] and [extensive lysis of adhesions].</p>')
+        r=self.call('mod22/',{'content':self.a['content'],'factors':'','template_id':tpl['id']})
+        self.assertEqual(r.status_code,200,r.content)
+        self.assertIn('dense periprostatic adhesions',r.json()['proposal']['content'])   # bracket hint carried through (mock echoes it)
+
+    @override_settings(AI_PROVIDER='gemini',AI_API_KEY='k',AI_MODEL='gemini-2.5-flash')
+    def test_mod22_allows_supplied_time_rejects_invented(self):
+        from library.services import mod22_statement
+        src='<h2>Indication for Procedure</h2><p>@AGE@ ***</p>'
+        ok={'content':'<p>Modifier 22: an additional 75 minutes of adhesiolysis was required due to dense adhesions.</p>'+src,'summary':'Added modifier-22 paragraph.','questions':[]}
+        with patch('library.services.httpx.Client') as client:
+            client.return_value.__enter__.return_value.post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(ok)}}]}
+            out=mod22_statement(src,'an additional 75 minutes of adhesiolysis, dense adhesions')
+        self.assertIn('75 minutes',out['content'])                # figure the surgeon supplied is allowed
+        bad={'content':'<p>Modifier 22: this took an extra 200 minutes.</p>'+src,'summary':'x','questions':[]}
+        with patch('library.services.httpx.Client') as client:
+            client.return_value.__enter__.return_value.post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(bad)}}]}
+            with self.assertRaises(ValueError): mod22_statement(src,'dense adhesions')   # 200 minutes not supplied -> rejected
     def test_backup_roundtrip_and_atomic_failure(self):
         backup=self.client.get('/api/export/').json()
         response=self.call('import/',backup)

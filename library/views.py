@@ -142,6 +142,29 @@ def grammar(request,data):
     return JsonResponse({'proposal':dict(result,source=content),'provider':settings.AI_PROVIDER})
 
 @api(['POST'])
+def mod22(request,data):
+    """Explicit, surgeon-initiated modifier-22 justification for a transient case draft."""
+    import re as _re
+    from .services import clean, mod22_statement
+    content=clean(data.get('content',''))
+    if not plain(content): raise ValueError('No narrative to add to.')
+    factors=str(data.get('factors','')).strip()[:10000]
+    suggestions=''
+    tid=data.get('template_id')
+    if tid is not None:
+        t=own(request,tid)
+        suggestions='\n'.join(_re.findall(r'\[[^\[\]\n]{2,300}\]',plain(t.content)))[:10000]
+    if not factors and not suggestions:
+        raise ValueError('Describe the case-specific complexity factors, or pick a template with bracketed suggestions.')
+    try:
+        result=mod22_statement(content,factors,suggestions)
+    except ValueError as e:
+        raise
+    except Exception:
+        return JsonResponse({'error':'Modifier-22 draft unavailable or returned an unsafe response. Your text is unchanged.'},status=502)
+    return JsonResponse({'proposal':dict(result,source=content),'provider':settings.AI_PROVIDER})
+
+@api(['POST'])
 def approve(request,data):
     scope=signing.loads(data['scope'],salt='review',max_age=3600)
     if scope['user']!=request.user.pk or scope['mode']!='master': raise ValueError('Invalid review scope.')

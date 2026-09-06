@@ -64,8 +64,9 @@ h3{font-size:13px}
 .manual{margin:10px 0}
 .manual>summary{font-size:11px;color:#4c705b}
 #checklist-body h3{margin:14px 0 4px}
-#freetext{border:1px solid #dce2dc;border-radius:8px;padding:10px 14px;background:#fafbf8}
-#freetext>summary{font-weight:600;color:#25493c}
+#freetext,#mod22{border:1px solid #dce2dc;border-radius:8px;padding:10px 14px;background:#fafbf8}
+#freetext>summary,#mod22>summary{font-weight:600;color:#25493c}
+#mod22[open]>summary{color:#8a5a1a}
 #ph-count{opacity:.7;font-weight:400}
 #strip-tokens:disabled{opacity:.45}
 .check{border:1px solid #e1e6df;border-radius:7px;padding:9px 11px;margin-top:8px}

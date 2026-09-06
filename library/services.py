@@ -148,7 +148,7 @@ def _chat_completion(source,instruction):
         'source_html':source,
     })
 
-def _finish(source,instruction,result):
+def _finish(source,instruction,result,allow_billing=False):
     if not isinstance(result,dict) or set(result) != {'content','summary','questions'}: raise ValueError('Invalid AI response.')
     if not isinstance(result['summary'],str) or len(result['summary'])>5000 or not isinstance(result['questions'],list) or len(result['questions'])>30 or any(not isinstance(q,str) or len(q)>2000 for q in result['questions']): raise ValueError('Invalid AI response.')
     result['content']=clean(result['content'])
@@ -158,9 +158,16 @@ def _finish(source,instruction,result):
         result['warnings'].append('Source asserts no complications. Confirm it remains consistent with your instructions.')
     if re.search(r'difficult|scarring|inflammation',instruction,re.I):
         result['warnings'].append('Difficulty alone does not establish extra time or billing eligibility.')
-    # Reject newly introduced time/billing claims unless explicitly present in source/instructions.
-    claims=re.findall(r'\b\d+\s*(?:minutes?|hours?)\b|modifier\s*[- ]?22',plain(result['content']),re.I)
-    if any(c.lower() not in (plain(source)+' '+instruction).lower() for c in claims): raise ValueError('AI introduced unsupported time or billing language. Original text preserved.')
+    supplied=(plain(source)+' '+instruction).lower()
+    if allow_billing:
+        # Explicit modifier-22 flow: billing wording is allowed, but an invented numeric time is not.
+        times=re.findall(r'\b\d+\s*(?:minutes?|hours?)\b',plain(result['content']),re.I)
+        if any(t.lower() not in supplied for t in times): raise ValueError('The draft added an operative time you did not supply. Provide the exact figure or leave time out.')
+        result['warnings'].append('You are adding a modifier-22 justification. Confirm the documentation and medical necessity support it — this tool does not determine coding eligibility.')
+    else:
+        # Reject newly introduced time/billing claims unless explicitly present in source/instructions.
+        claims=re.findall(r'\b\d+\s*(?:minutes?|hours?)\b|modifier\s*[- ]?22',plain(result['content']),re.I)
+        if any(c.lower() not in supplied for c in claims): raise ValueError('AI introduced unsupported time or billing language. Original text preserved.')
     return result
 
 def propose(source,instruction):
@@ -186,6 +193,36 @@ def grammar_pass(source):
     else:
         raise ValueError('AI disabled.')
     return _finish(source,'',result)
+
+MOD22_CONTRACT = '''You draft a Modifier 22 (increased procedural services) justification paragraph for one specific completed case. It goes ABOVE the "Indication for Procedure" heading in the operative note.
+
+Use ONLY: the surgeon's complexity_factors, any template_suggestions (bracketed hints from the surgeon's own modifier-22 template), and what is already in source_html.
+
+Rules:
+- Do NOT invent operative time, blood loss, BMI, adhesion grade, or any number. If the surgeon supplies a figure you may state it verbatim; otherwise use no figure.
+- Do NOT write that the case "qualifies for", "meets criteria for", or "warrants" modifier 22. Describe the specific factors that made this service substantially greater than the typical procedure and let the coder decide.
+- Keep the surgeon's voice and tense. One paragraph, factual, specific.
+
+Return the COMPLETE narrative with exactly one new paragraph inserted directly above the "Indication for Procedure" heading (if the note has no such heading, place it just before the first operative/indication content). Change nothing else; keep every Epic token verbatim.
+
+Respond with ONLY a JSON object (no prose, no code fences): {"content": full HTML, "summary": one sentence, "questions": array of strings}.'''
+
+def _insert_above_indication(source,paragraph):
+    m=re.search(r'<(h[1-6]|p)[^>]*>\s*indication for procedure',source,re.I)
+    return source[:m.start()]+paragraph+source[m.start():] if m else paragraph+source
+
+def mod22_statement(source,factors,suggestions=''):
+    """Explicit, surgeon-initiated modifier-22 justification. Never inferred."""
+    context=(factors+' '+suggestions).strip()
+    if not context: raise ValueError('Describe the case-specific complexity factors, or choose a template with bracketed suggestions.')
+    if settings.AI_PROVIDER=='mock':
+        para='<p><strong>Modifier 22 — increased procedural services:</strong> MOCK provider: no justification generated. Supplied factors: '+clean(factors)+(' | template hints: '+clean(suggestions) if suggestions else '')+'</p>'
+        result={'content':_insert_above_indication(source,para),'summary':'MOCK: inserted a placeholder modifier-22 line above the indication.','questions':['MOCK provider — write the actual justification yourself and confirm coding support.']}
+    elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
+        result=_chat_json(MOD22_CONTRACT,{'task':'Draft the modifier-22 justification paragraph and return the complete narrative with it inserted above the "Indication for Procedure" heading.','complexity_factors':factors,'template_suggestions':suggestions,'source_html':source})
+    else:
+        raise ValueError('AI disabled.')
+    return _finish(source,context,result,allow_billing=True)
 
 def _fill_sentences(source):
     """The sentence around every unresolved Epic placeholder (*** , @TOKEN@ , {...})
