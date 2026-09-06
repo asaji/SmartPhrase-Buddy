@@ -120,13 +120,14 @@ async function caseEditor(t){page(`<div class="intro"><div><div class="eyebrow">
    if(!it.placeholder)return `<div class="check"><p class="check-q">${esc(it.question)}</p><textarea data-q data-qtext="${esc(it.question)}" placeholder="Your answer (leave blank to skip)"></textarea></div>`;
    const idx=i++,tok=it.token||'***';
    return `<div class="check"><p class="check-ctx">${esc(it.context||'').replace(TOKEN_RX,m=>'<mark>'+esc(m)+'</mark>')}</p><p class="check-q">${esc(it.question)}</p><textarea data-fill="${idx}" placeholder="Your answer"></textarea><div class="check-opts"><label><input type="checkbox" data-literal="${idx}"> insert exactly as typed</label><select data-mode="${idx}"><option value="fill">Use my answer</option><option value="keep">Keep ${esc(tok)} as an Epic field</option><option value="remove">Remove this line</option></select></div></div>`;
-  }).join('')+`<button id="apply-checklist" class="primary">Apply answers</button>`;
+  }).join('')+`<p class="hint">Answer with what you did. If a step did not happen, answer “no” / “none” (the line is deleted, not negated) or pick “Remove this line”.</p><button id="apply-checklist" class="primary">Apply answers</button>`;
   action('#apply-checklist',applyChecklist);}
+ const NEG=/^\s*(no|none|n\/?a|nil|negative|not\s+(applicable|done|placed|performed|used|indicated|present)|(we\s+)?did\s?n.?.?t|didn.?t|was\s+not|were\s+not|omit(ted)?|remove[d]?|skip(ped)?)\b/i;
  async function applyChecklist(){const body=$('#checklist-body');const subs=new Map(),removeIdx=new Set(),removed=[],qa=[];
   body.querySelectorAll('[data-fill]').forEach(ta=>{const idx=+ta.dataset.fill,card=ta.closest('.check'),mode=card.querySelector(`select[data-mode="${idx}"]`).value,lit=card.querySelector(`[data-literal="${idx}"]`).checked,txt=ta.value.trim();
    const ctx=card.querySelector('.check-ctx')?.textContent?.trim()||('fill-in #'+idx),q=card.querySelector('.check-q')?.textContent?.trim()||ctx;
    if(mode==='remove'){removeIdx.add(idx);removed.push(ctx);}
-   else if(mode==='fill'&&txt){if(lit)subs.set(idx,txt);else qa.push({question:q,answer:txt});}});
+   else if(mode==='fill'&&txt){if(NEG.test(txt)){removeIdx.add(idx);removed.push(ctx+'  — you answered “'+txt+'”');}else if(lit)subs.set(idx,txt);else qa.push({question:q,answer:txt});}});
   body.querySelectorAll('[data-q]').forEach(ta=>{if(ta.value.trim())qa.push({question:ta.dataset.qtext,answer:ta.value.trim()});});
   if(removeIdx.size&&!confirm('Remove these lines entirely from the case draft?\n\n• '+removed.join('\n• ')))return;
   if(!subs.size&&!removeIdx.size&&!qa.length){notify('Answer at least one item first.');return;}

@@ -229,7 +229,7 @@ def finalize_apply(source,answers):
         result={'content':content,'summary':'MOCK: replaced *** placeholders in order with your answers; no clinical reasoning or phrasing.','questions':['MOCK provider — verify every substitution and its wording manually.']}
     elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
         result=_chat_json(CONTRACT,{
-            'task':'Finalise the operative narrative in source_html for one specific completed case using answered_checklist. Put each answer where it applies — usually replacing a *** fill-in or completing the sentence the question quoted. Phrase it to read naturally in the surgeon\'s voice. Return the COMPLETE narrative; change nothing else; invent nothing; keep every other token verbatim.',
+            'task':'Finalise the operative narrative in source_html for one specific completed case using answered_checklist. Put each answer where it applies — usually replacing a *** fill-in or completing the sentence the question quoted. Phrase it to read naturally in the surgeon\'s voice. If an answer indicates the step did not happen or does not apply (for example "no", "none", "n/a", "not placed", "we did not"), DELETE the sentence or optional passage that question was about — do NOT write a negative sentence such as "No drain was placed." Return the COMPLETE narrative; change nothing else; invent nothing; keep every other token verbatim.',
             'answered_checklist':answers,
             'source_html':source,
         })
