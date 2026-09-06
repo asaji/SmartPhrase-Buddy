@@ -81,6 +81,22 @@ class Workflows(TestCase):
         restored=self.call(f"templates/{self.a['id']}/restore/",{'restore_version':1,'version':2})
         self.assertEqual(restored.json()['content'],self.a['content'])
         self.assertEqual(restored.json()['version'],3)
+    def test_master_mode_content_override_for_unsaved_editor_draft(self):
+        # The master editor's "ask AI to improve this note" sends the currently open (possibly
+        # unsaved) draft rather than the last-saved revision.
+        draft='<p>@AGE@ *** unsaved editor draft</p>'
+        self.assertNotEqual(draft,self.a['content'])
+        before=list(Template.objects.values())
+        r=self.proposal(content=draft)
+        self.assertEqual(r.status_code,200,r.content)
+        self.assertEqual(r.json()['proposals'][0]['source'],draft)
+        self.assertEqual(before,list(Template.objects.values()))  # persists nothing
+        # A content override naming more than one template is ambiguous and rejected.
+        bad=self.call('propose/',{'mode':'master','ids':[self.a['id'],self.b['id']],'instruction':'x','content':draft})
+        self.assertEqual(bad.status_code,400)
+        # Without an override, master mode still revises the saved template content (batch update).
+        r2=self.proposal()
+        self.assertEqual(r2.json()['proposals'][0]['source'],self.a['content'])
     def test_tokens_and_explicit_review(self):
         src='<p>@NAME@ @ODD_NEW@ {UNKNOWN:abc} *** {a|b} @NAME@</p>'
         self.assertEqual(sum(tokens(src).values()),6)
@@ -384,6 +400,53 @@ class PdfImport(TestCase):
         self.assertEqual(self.client.get('/api/imports/').json()['items'],[])
         rid=PendingImport.objects.first().pk
         self.assertEqual(self.client.post('/api/imports/%d/resolve/'%rid,data=json.dumps({'action':'dismiss'}),content_type='application/json').status_code,404)
+
+    def test_queue_save_is_atomic_and_cannot_be_repeated(self):
+        self.upload()
+        row=PendingImport.objects.filter(owner=self.user).first()
+        data={'title':'Reviewed import','content':'<p>Reviewed source.</p>','pending_import_id':row.pk}
+        before=Template.objects.count()
+        def save(payload):
+            return self.client.post('/api/templates/',data=json.dumps(payload),content_type='application/json')
+        # Failed validation and failures after creation must release the claim.
+        self.assertEqual(save(dict(data,title='')).status_code,400)
+        with patch('library.views.record',side_effect=ValueError('Synthetic failure')):
+            self.assertEqual(save(data).status_code,400)
+        row.refresh_from_db()
+        self.assertIsNone(row.imported_at)
+        self.assertIsNone(row.imported_template_id)
+        self.assertEqual(Template.objects.count(),before)
+        response=save(data)
+        self.assertEqual(response.status_code,201,response.content)
+        row.refresh_from_db()
+        self.assertEqual(row.imported_template_id,response.json()['id'])
+        self.assertIsNotNone(row.imported_at)
+        self.assertEqual(row.imported_template.revisions.count(),1)
+        self.assertEqual(save(data).status_code,400)
+        self.assertEqual(Template.objects.count(),before+1)
+
+    def test_queue_save_rejects_other_owner_and_dismissed_entries(self):
+        self.upload()
+        row=PendingImport.objects.filter(owner=self.user).first()
+        before=Template.objects.count()
+        data={'title':'Import','content':'<p>Source.</p>','pending_import_id':row.pk}
+        self.client.force_login(get_user_model().objects.create_user('intruder'))
+        self.assertEqual(self.client.post('/api/templates/',data=json.dumps(data),content_type='application/json').status_code,400)
+        self.client.force_login(self.user)
+        row.dismissed=True;row.save()
+        self.assertEqual(self.client.post('/api/templates/',data=json.dumps(data),content_type='application/json').status_code,400)
+        self.assertEqual(Template.objects.count(),before)
+
+    def test_queue_resolve_requires_owned_template(self):
+        self.upload()
+        row=PendingImport.objects.filter(owner=self.user).first()
+        other=get_user_model().objects.create_user('other')
+        foreign=Template.objects.create(owner=other,title='Other',content='<p>Other</p>')
+        for tid,code in [(None,400),(foreign.pk,404)]:
+            response=self.client.post('/api/imports/%d/resolve/'%row.pk,data=json.dumps({'action':'imported','template_id':tid}),content_type='application/json')
+            self.assertEqual(response.status_code,code)
+            row.refresh_from_db()
+            self.assertIsNone(row.imported_at)
 
     def test_import_pdf_rejects_bad_input_and_anonymous(self):
         self.assertEqual(self.client.post('/api/import/pdf/',{}).status_code,400)
