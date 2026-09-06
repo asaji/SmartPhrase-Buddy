@@ -102,7 +102,9 @@ When an AI provider is configured, **Save new master revision** / **Approve and 
 
 ### Completing a case line by line
 
-The case editor has a second pass beside the free-text box: **Complete the case, line by line** (`POST /api/finalize/`). **Build case checklist** returns one ordered list of items:
+The case editor is organised around the way notes actually get finished: **1 · Build the case checklist** is the primary action, **2 · Clean up leftovers** (Strip unresolved placeholders, with a live count) comes after it, and **Free-text edit** is a collapsed backup for anything the checklist did not cover.
+
+**Build case checklist** (`POST /api/finalize/`) returns one ordered list of items:
 
 1. **Review questions** first — defaults in the note that may not apply to this case (laterality, nerve-sparing, node-dissection extent, drains, specimens, estimated blood loss, implants) and routine items that look missing.
 2. Then **one item per unresolved Epic placeholder** — `***`, a token like `@AGE@`, or a `{…}` — in document order. Placeholders are found deterministically (`TOKEN_RE`, client-side, each shown with its sentence and the token marked); the provider supplies a targeted question for each (e.g. *"Which specific hemostatic product was used in the lymph node bed?"*, *"What is the patient's age?"*). Because a finalised narrative is pasted into Epic as plain text, placeholders will not auto-fill — this pass is where they get resolved.
