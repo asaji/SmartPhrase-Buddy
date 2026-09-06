@@ -38,7 +38,7 @@ def normalize(data):
         result[field]=value.strip()
     if not result['title']: raise ValueError('A title is required.')
     result['kind']=data.get('kind','clinic')
-    if result['kind'] not in ['clinic','operative','other']: raise ValueError('Invalid type.')
+    if result['kind'] not in ['clinic','operative','procedure','library','other']: raise ValueError('Invalid type.')
     for field in ['tags','aliases']:
         value=data.get(field,[])
         if not isinstance(value,list) or len(value)>50 or any(not isinstance(v,str) or len(v)>100 for v in value): raise ValueError('Invalid '+field)

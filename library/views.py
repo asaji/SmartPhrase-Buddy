@@ -87,7 +87,7 @@ def proposal(request,data):
     ids=data.get('ids',[])
     if not isinstance(ids,list) or not 1<=len(ids)<=10 or len(set(ids))!=len(ids): raise ValueError('Select 1–10 distinct templates.')
     selected=[own(request,pk) for pk in ids]
-    if mode=='case' and (len(selected)!=1 or selected[0].kind!='operative'): raise ValueError('Select one operative template.')
+    if mode=='case' and (len(selected)!=1 or selected[0].kind not in ('operative','procedure')): raise ValueError('Select one operative or procedure template.')
     from .services import clean
     outputs=[]
     try:

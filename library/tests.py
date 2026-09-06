@@ -49,6 +49,24 @@ class Workflows(TestCase):
         self.assertNotIn('scarring',str(list(self.client.session.items())))
         r2=self.call('approve/',{'scope':r.json()['scope'],'id':self.a['id'],'content':'bad'})
         self.assertEqual(r2.status_code,400)
+    def test_note_types_accepted_filtered_and_validated(self):
+        p=self.create('Office cystoscopy',kind='procedure',epic_name='ASPROCCYSTO',content='<p>Findings: [[Bladder: normal | trabeculation | mass]] EBL [[EBL: minimal | *** mL]].</p>')
+        lib=self.create('TURP evidence',kind='library',epic_name='ASCLINICPLANTURP',content='<p>Risks and benefits were discussed.</p>')
+        self.assertEqual(self.client.get(f"/api/templates/{p['id']}/").json()['kind'],'procedure')
+        self.assertEqual(self.client.get(f"/api/templates/{lib['id']}/").json()['kind'],'library')
+        self.assertEqual({t['id'] for t in self.client.get('/api/templates/',{'kind':'procedure'}).json()['items']},{p['id']})
+        self.assertEqual(self.call('templates/',{'title':'Bad','kind':'nonsense','content':'<p>x</p>'}).status_code,400)
+        return p
+
+    def test_case_proposal_accepts_procedure_rejects_library(self):
+        p=self.test_note_types_accepted_filtered_and_validated()
+        ok=self.call('propose/',{'mode':'case','ids':[p['id']],'instruction':'Assemble into prose.','content':'<p>Bladder trabeculation. EBL minimal.</p>'})
+        self.assertEqual(ok.status_code,200,ok.content)
+        self.assertTrue(ok.json()['proposals'][0]['content'])
+        lib=self.create('Lib2',kind='library',content='<p>x</p>')
+        bad=self.call('propose/',{'mode':'case','ids':[lib['id']],'instruction':'x','content':'<p>x</p>'})
+        self.assertEqual(bad.status_code,400)
+
     def test_scope_reject_approve_restore_and_stale(self):
         result=self.proposal().json()
         self.assertEqual(Revision.objects.count(),2) # proposing/rejecting makes no persistent change

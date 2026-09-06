@@ -48,6 +48,14 @@ npm run build
 - Login/logout, password change, no public signup, authenticated API, ownership checks, CSRF, no-store responses, strict content security policy, request size limits, login/AI rate limits.
 - Configurable mock or HTTPS chat-completions-compatible AI provider, timeout and malformed-result handling, server-only secrets.
 
+## Note types
+
+Every phrase has a **type** (`kind`), set in the editor and used to route it to the right workflow. `clinic`, `operative`, `procedure`, `library`, `other` are the accepted values.
+
+- **Operative template** (`operative`) — the full case workflow: **Customize this case** opens the in-memory case editor with the line-by-line checklist, free-text AI instructions, modifier-22 tool, grammar-on-copy, and the Epic header boundary. Unchanged.
+- **Procedure note** (`procedure`) — for short, repetitive office procedures (cystoscopy, prostate biopsy). **Fill out this procedure** opens a structured editor: the template author marks findings up inline as `[[Label: option | option | *** free value]]` (e.g. `[[Bladder: normal | trabeculation | diverticulum | mass]]`, `[[EBL: minimal | *** mL]]`). The right panel renders one checkbox group per marker plus a free-text slot; **Generate note** substitutes the ticked values deterministically (multiple picks are joined as a list), then — if *smooth into prose* is left checked and AI is configured — sends the assembled text through `/api/propose/` (`mode:"case"`) for a reviewed diff that may only reword what is already there, never add findings. Adding a new procedure needs no code change: add markers to the master template. The case-proposal endpoint accepts `operative` and `procedure` kinds only.
+- **Library item** (`library`) — a risks/benefits/evidence SmartPhrase (e.g. `ASCLINICPLANTURP`). Keeps the master editor for now; the evidence workflow (paste-your-own by default, opt-in AI-suggested citations flagged *UNVERIFIED*) is not built yet.
+
 ## PDF import
 
 Many Epic builds let a user print/export their SmartPhrases to PDF. In **New phrase / import → Import from an Epic SmartPhrase PDF export**, choose that file. The server (`library/pdfimport.py`, using `pypdf`) extracts the selectable text and splits it into segments: a line that is only an uppercase token (`ASOPNSPRALP`, `ASLIBTPVSTR`, …) and is preceded by a blank line starts a new segment; text before the first such line becomes an unnamed segment. Each segment carries the detected name, the extracted text, a conservative plain-text→HTML rendering (one paragraph per line, bullet lists preserved — no headings or emphasis inferred), and review flags (letterhead lines, patient-facing disclaimer blocks, a fixed patient age, no Epic tokens detected, `[ … ]` bracket placeholders).
