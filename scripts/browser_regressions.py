@@ -1,0 +1,218 @@
+"""Browser regressions for draft integrity, with synthetic data and no external AI."""
+from browser_support import synthetic_server
+from playwright.sync_api import sync_playwright, expect
+
+with synthetic_server() as base_url:
+    from django.contrib.auth import get_user_model
+    from library.models import Template, Revision, PendingImport
+    from library.services import snapshot
+    user=get_user_model().objects.create_user('regression',password='synthetic-test-password')
+    def template(title,kind,content):
+        t=Template.objects.create(owner=user,title=title,kind=kind,content=content)
+        Revision.objects.create(template=t,version=1,snapshot=snapshot(t))
+        return t
+    procedure=template('Procedure regression','procedure','<p>[[Bladder: normal | mass]]</p><p>[[EBL: minimal | moderate]]</p><p>Keep <strong>this formatting</strong>.</p>')
+    operative=template('Checklist regression','operative','<p>Age @AGE@.</p><p>Drain ***.</p>')
+    extent=template('Operative choice regression','operative','<p>[[Extent: RALP without pelvic lymphadenectomy | RALP with standard pelvic lymphadenectomy | RALP with extended pelvic lymphadenectomy]]</p><p>Drain ***.</p>')
+    removal=template('Removal regression','operative','<p>Keep <strong>this sentence</strong>. Device *** at *** location. Keep <em>this too</em>.</p>')
+    formatted=template('Formatted regression','procedure','<p>Value <strong>**</strong>*.</p><p>[[Field: <strong>one</strong> | two]]</p><ul><li>Parent <strong>**</strong>*<ul><li>Child @TOKEN@</li></ul></li></ul>')
+    with sync_playwright() as p:
+        browser=p.chromium.launch(channel='chrome',headless=True)
+        page=browser.new_page();page.set_default_timeout(10000)
+        errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        accept_dialogs=[True]
+        page.on('dialog',lambda dialog:dialog.accept() if accept_dialogs[0] else dialog.dismiss())
+        page.goto(base_url+'/')
+        page.get_by_label('Username').fill(user.username)
+        page.locator('#id_password').fill('synthetic-test-password')
+        page.get_by_role('button',name='Sign in',exact=True).click()
+        def open_template(t,master=False):
+            page.locator('#library-nav').click()
+            page.locator(f'[data-open="{t.pk}"]').click()
+            page.locator('#edit' if master else '#case').click()
+            selector='#content' if master else '#p-content' if t.kind=='procedure' else '#case-content'
+            expect(page.locator(selector+' .tiptap')).to_be_visible()
+            # The status request finishes wiring controls after mounting the editor.
+            if not master:
+                expect(page.locator('#draft-history-body .hist')).to_have_count(1)
+            return page.locator(selector+' .tiptap')
+        def check_field(index,value,checked=True):
+            page.locator(f'input[data-m="{index}"][value="{value}"]').set_checked(checked)
+        def check_case_field(index,value,checked=True):
+            page.locator(f'input[data-cm="{index}"][value="{value}"]').set_checked(checked)
+
+        editor=open_template(procedure)
+        check_field(0,'normal');page.locator('#p-generate').click()
+        expect(editor).to_contain_text('Bladder: normal.')
+        expect(editor).to_contain_text('[[EBL:')
+        check_field(1,'minimal');page.locator('#p-generate').click()
+        expect(editor).to_contain_text('EBL: minimal.')
+        expect(editor).not_to_contain_text('EBL: normal.')
+        check_field(0,'normal',False);check_field(0,'mass');page.locator('#p-generate').click()
+        expect(editor).to_contain_text('Bladder: mass.')
+        expect(editor.locator('strong')).to_have_text('this formatting')
+        editor.fill('Manual note to preserve.')
+        accept_dialogs[0]=False;page.locator('#p-generate').click()
+        expect(editor).to_have_text('Manual note to preserve.')
+        accept_dialogs[0]=True;page.locator('#p-generate').click()
+        expect(editor).to_contain_text('EBL: minimal.')
+        page.locator('#draft-history summary').click()
+        expect(page.locator('#draft-history-body')).to_contain_text('Before filling fields')
+        # Clearing all selections restores the original fields, not old values.
+        check_field(0,'mass',False);check_field(1,'minimal',False);page.locator('#p-generate').click()
+        expect(editor).to_contain_text('[[Bladder:')
+        expect(editor).to_contain_text('[[EBL:')
+        print('PASS: repeated/changed procedure selections and manual-edit protection')
+
+        editor=open_template(extent)
+        expect(page.locator('#case-fields')).to_contain_text('Extent')
+        check_case_field(0,'RALP with standard pelvic lymphadenectomy')
+        page.locator('#case-generate').click()
+        expect(editor).to_contain_text('Extent: RALP with standard pelvic lymphadenectomy.')
+        expect(editor).to_contain_text('Drain ***.')  # the marker never touches unrelated *** tokens
+        # The AI checklist still surfaces the untouched *** independently of the picked option.
+        page.locator('#checklist').click()
+        page.locator('[data-fill="0"]').fill('foley catheter');page.locator('[data-literal="0"]').check()
+        page.locator('#apply-checklist').click()
+        expect(editor).to_contain_text('Drain foley catheter.')
+        expect(editor).to_contain_text('Extent: RALP with standard pelvic lymphadenectomy.')
+        # Switching the pick before regenerating replaces the earlier choice, not the checklist answer.
+        check_case_field(0,'RALP with standard pelvic lymphadenectomy',False);check_case_field(0,'RALP with extended pelvic lymphadenectomy')
+        page.locator('#case-generate').click()
+        expect(editor).to_contain_text('Extent: RALP with extended pelvic lymphadenectomy.')
+        expect(editor).not_to_contain_text('standard pelvic lymphadenectomy')
+        editor=open_template(extent)
+        page.locator('#strip-tokens').click()
+        expect(editor).not_to_contain_text('[[')
+        expect(editor).not_to_contain_text('***')
+        print('PASS: operative [[ … ]] choice fields fill, coexist with the AI checklist, and strip cleanly')
+
+        editor=open_template(operative)
+        page.locator('#checklist').click()
+        page.locator('[data-fill="0"]').fill('50');page.locator('[data-literal="0"]').check()
+        page.locator('#apply-checklist').click()
+        expect(editor).to_contain_text('Age 50.')
+        expect(editor).to_contain_text('Drain ***.')
+        expect(page.locator('#apply-checklist')).to_have_count(0)
+        page.locator('#checklist').click()
+        expect(page.locator('[data-fill]')).to_have_count(1)
+        page.locator('[data-fill="0"]').fill('catheter');page.locator('[data-literal="0"]').check()
+        editor.fill('Manual *** changed.')
+        page.locator('#apply-checklist').click()
+        expect(page.locator('#notice')).to_contain_text('Rebuild the checklist')
+        expect(editor).to_have_text('Manual *** changed.')
+        print('PASS: consumed and stale checklists cannot move answers')
+
+        delayed_checklist=[]
+        page.route('**/api/finalize/',lambda route:delayed_checklist.append(route))
+        editor=open_template(operative);page.locator('#checklist').click()
+        editor.fill('New draft *** while checklist was loading.')
+        assert delayed_checklist
+        delayed_checklist.pop().fulfill(json={'provider':'mock','items':[]})
+        expect(page.locator('#notice')).to_contain_text('changed while building')
+        expect(editor).to_have_text('New draft *** while checklist was loading.')
+        page.unroute('**/api/finalize/')
+
+        for remove_index,fill_index in [(0,1),(1,0)]:
+            editor=open_template(removal)
+            page.locator('#checklist').click()
+            page.locator(f'[data-mode="{remove_index}"]').select_option('remove')
+            page.locator(f'[data-fill="{fill_index}"]').fill('left')
+            page.locator(f'[data-literal="{fill_index}"]').check()
+            page.locator('#apply-checklist').click()
+            expect(editor).not_to_contain_text('Device')
+            expect(editor).not_to_contain_text('left')
+            expect(editor.locator('strong')).to_have_text('this sentence')
+            expect(editor.locator('em')).to_have_text('this too')
+        editor=open_template(formatted)
+        page.locator('#p-strip').click()
+        expect(editor).not_to_contain_text('***')
+        expect(editor).not_to_contain_text('[[')
+        expect(editor).not_to_contain_text('@TOKEN@')
+        expect(page.locator('#p-strip')).to_be_disabled()
+        print('PASS: overlapping removal/fills and formatted/nested placeholder stripping')
+
+        # Synthetic grammar response, independently delayed to simulate typing
+        # both while a request runs and after its review card is displayed.
+        pending=[]
+        page.route('**/api/grammar/',lambda route:pending.append(route))
+        def finish_grammar():
+            page.wait_for_function('true')  # dispatch pending route callbacks
+            assert pending,'Grammar request was not sent'
+            route=pending.pop(0)
+            source=route.request.post_data_json['content']
+            route.fulfill(json={'provider':'synthetic','proposal':{'source':source,'content':source+'<p>Grammar correction.</p>','summary':'Synthetic correction','questions':[],'warnings':[]}})
+        for t,master in [(operative,False),(procedure,False),(operative,True)]:
+            for during_request in [False,True]:
+                editor=open_template(t,master)
+                if master:
+                    page.locator('#confirm-master').check()
+                    page.locator('#save').click()
+                else:
+                    page.locator('#case-grammar' if t.kind=='operative' else '#p-grammar').click()
+                if during_request:
+                    editor.fill('New manual text during grammar request.')
+                    finish_grammar()
+                else:
+                    finish_grammar()
+                    expect(page.locator('.review')).to_have_count(1)
+                    editor.fill('New manual text after grammar request.')
+                    page.locator('.review .ack').check();page.locator('.review .accept').click()
+                expect(page.locator('#notice')).to_contain_text('narrative changed')
+                expect(editor).to_contain_text('New manual text')
+                expect(editor).not_to_contain_text('Grammar correction')
+                t.refresh_from_db();assert t.version==1
+        # A response from a closed case must not appear in the next case.
+        editor=open_template(operative);page.locator('#case-grammar').click()
+        editor=open_template(procedure);finish_grammar()
+        expect(page.locator('.review')).to_have_count(0)
+        expect(editor).to_contain_text('[[Bladder:')
+        print('PASS: stale grammar results blocked in all editors and after navigation')
+
+        # A current proposal must still work, including an atomic master save.
+        for t,master in [(operative,False),(procedure,False),(operative,True)]:
+            editor=open_template(t,master)
+            if master:
+                page.locator('#confirm-master').check();page.locator('#save').click()
+            else:
+                page.locator('#case-grammar' if t.kind=='operative' else '#p-grammar').click()
+            finish_grammar()
+            page.locator('.review .ack').check();page.locator('.review .accept').click()
+            if master:
+                expect(page.locator('#notice')).to_contain_text('Master saved as revision 2')
+                t.refresh_from_db();assert t.version==2
+            else:
+                expect(editor).to_contain_text('Grammar correction.')
+        page.unroute('**/api/grammar/')
+
+        row=PendingImport.objects.create(owner=user,batch='synthetic',name='Queued regression',text='Queued source.',html='<p>Queued source.</p>',text_hash='synthetic')
+        before=Template.objects.filter(owner=user).count()
+        page.locator('#imports-nav').click()
+        page.locator(f'.qopen[data-open="{row.pk}"]').click()
+        page.locator('#confirm-master').check();page.locator('#save').click()
+        expect(page.locator('#notice')).to_contain_text('Removed from the import queue')
+        row.refresh_from_db()
+        assert row.imported_at and row.imported_template_id
+        assert row.imported_template.revisions.count()==1
+        assert Template.objects.filter(owner=user).count()==before+1
+        expect(page.locator('.qopen')).to_have_count(0)
+        print('PASS: current grammar proposals and atomic queued import through the UI')
+
+        # Master editor "ask AI to improve this note" — proposes a reviewed diff into the editor
+        # only; nothing is persisted until the surgeon confirms and saves a new revision.
+        editor=open_template(operative,master=True)
+        page.locator('#improve summary').click()
+        page.get_by_label('Instructions',exact=True).fill('Significant periprostatic inflammation and scarring made dissection difficult.')
+        page.get_by_role('button',name='Propose improvement').click()
+        expect(page.locator('.review')).to_have_count(1)
+        page.locator('.review .ack').check();page.locator('.review .accept').click()
+        expect(editor).to_contain_text('scarring')
+        operative.refresh_from_db();assert operative.version==2  # accepted into the editor only, not yet saved
+        page.locator('#confirm-master').check();page.locator('#save').click()
+        expect(page.locator('#notice')).to_contain_text('revision 3')
+        operative.refresh_from_db();assert operative.version==3 and 'scarring' in operative.content
+        print('PASS: master editor AI-improve stages a reviewed diff into the editor; save persists it')
+        assert not errors,errors
+        assert page.evaluate('localStorage.length + sessionStorage.length')==0
+        browser.close()
+    print('PASS: all browser regressions; synthetic database discarded')

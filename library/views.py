@@ -47,7 +47,18 @@ def replace(t,data,expected):
 def templates(request,data):
     if request.method=='POST':
         with transaction.atomic():
+            pending_id=data.get('pending_import_id')
+            if pending_id is not None:
+                if type(pending_id) is not int or pending_id < 1:
+                    raise ValueError('Invalid import queue entry.')
+                # Claim before creating anything. A repeated/concurrent save
+                # cannot create a second template from this queue entry.
+                claimed=PendingImport.objects.filter(pk=pending_id,owner=request.user,imported_at__isnull=True,dismissed=False).update(imported_at=timezone.now())
+                if claimed!=1:
+                    raise ValueError('This import is no longer pending. Reload the import queue.')
             t=Template.objects.create(owner=request.user,**normalize(data)); record(t)
+            if pending_id is not None:
+                PendingImport.objects.filter(pk=pending_id,owner=request.user).update(imported_template=t)
         return JsonResponse(serialize(t),status=201)
     items=Template.objects.filter(owner=request.user).order_by('-favorite','title')
     q=request.GET.get('q','').casefold().strip(); kind=request.GET.get('kind',''); tag=request.GET.get('tag','').casefold()
@@ -88,11 +99,15 @@ def proposal(request,data):
     if not isinstance(ids,list) or not 1<=len(ids)<=10 or len(set(ids))!=len(ids): raise ValueError('Select 1–10 distinct templates.')
     selected=[own(request,pk) for pk in ids]
     if mode=='case' and (len(selected)!=1 or selected[0].kind not in ('operative','procedure')): raise ValueError('Select one operative or procedure template.')
+    override='content' in data
+    if mode=='master' and override and len(selected)!=1: raise ValueError('A content override applies to a single template only.')
     from .services import clean
     outputs=[]
     try:
         for t in selected:
-            source=clean(data.get('content','')) if mode=='case' else t.content
+            # master mode normally revises the saved template; an explicit content override (single
+            # template only) lets the master editor improve the currently open, possibly-unsaved draft.
+            source=clean(data.get('content','')) if (mode=='case' or override) else t.content
             result=propose(source,instruction)
             result.update(id=t.pk,version=t.version,source=source)
             outputs.append(result)
@@ -269,7 +284,8 @@ def import_resolve(request,data,pk):
         row.save(update_fields=['dismissed','imported_at','imported_template'])
     elif action=='imported':
         tid=data.get('template_id')
-        row.imported_template=Template.objects.filter(pk=tid,owner=request.user).first() if tid is not None else None
+        if type(tid) is not int or tid < 1: raise ValueError('A saved template is required.')
+        row.imported_template=own(request,tid)
         row.imported_at=timezone.now(); row.dismissed=False
         row.save(update_fields=['imported_at','imported_template','dismissed'])
     else:
