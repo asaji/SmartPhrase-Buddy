@@ -67,6 +67,7 @@ h3{font-size:13px}
 #freetext,#mod22{border:1px solid #dce2dc;border-radius:8px;padding:10px 14px;background:#fafbf8}
 #freetext>summary,#mod22>summary{font-weight:600;color:#25493c}
 #mod22[open]>summary{color:#8a5a1a}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.92em;background:#eef2ec;padding:0 3px;border-radius:3px}
 #ph-count{opacity:.7;font-weight:400}
 #strip-tokens:disabled{opacity:.45}
 .check{border:1px solid #e1e6df;border-radius:7px;padding:9px 11px;margin-top:8px}
