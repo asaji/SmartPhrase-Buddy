@@ -89,7 +89,10 @@ class Workflows(TestCase):
         before=list(Template.objects.values()); hist=list(Revision.objects.values())
         q=self.call('finalize/',{'content':self.a['content'],'step':'questions'})
         self.assertEqual(q.status_code,200,q.content)
-        self.assertTrue(any('***' in s for s in q.json()['questions']))  # the fill-in is surfaced
+        items=q.json()['items']
+        self.assertTrue(any(it['placeholder'] and '***' in (it['context'] or '') for it in items))  # *** fill-in surfaced with its sentence
+        self.assertTrue(any(not it['placeholder'] for it in items))                                  # plus a non-*** review question
+        self.assertEqual([it['placeholder'] for it in items],sorted((it['placeholder'] for it in items)))  # review items first, then placeholders
         a=self.call('finalize/',{'content':self.a['content'],'answers':[{'question':'Fill-in','answer':'Floseal was applied to the pedicle.'}]})
         self.assertEqual(a.status_code,200,a.content)
         p=a.json()['proposal']

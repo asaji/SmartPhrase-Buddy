@@ -105,14 +105,16 @@ def proposal(request,data):
 @api(['POST'])
 def finalize(request,data):
     """Line-by-line case completion for a transient operative draft. Persists nothing."""
-    from .services import clean, finalize_questions, finalize_apply
+    from .services import clean, finalize_checklist, finalize_apply, _fill_sentences
     content=clean(data.get('content',''))
     if not plain(content): raise ValueError('No narrative to finalize.')
     if data.get('step')=='questions':
         try:
-            return JsonResponse({'questions':finalize_questions(content),'provider':settings.AI_PROVIDER})
+            return JsonResponse({'items':finalize_checklist(content),'provider':settings.AI_PROVIDER})
         except Exception:
-            return JsonResponse({'error':'Could not build the AI checklist. The *** fill-ins are still listed for you.'},status=502)
+            # AI checklist failed; still return the *** fill-ins so the surgeon can work manually.
+            fills=[{'context':c,'question':'What did you do here?','placeholder':True} for c in _fill_sentences(content)]
+            return JsonResponse({'items':fills,'provider':settings.AI_PROVIDER,'degraded':True})
     answers=data.get('answers')
     if not isinstance(answers,list) or not 1<=len(answers)<=60: raise ValueError('Provide 1–60 answered items.')
     norm=[]

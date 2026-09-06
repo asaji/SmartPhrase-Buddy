@@ -96,7 +96,20 @@ def _parse_json(raw):
         if not match: raise ValueError('The AI response was not valid JSON.')
         return json.loads(match.group(0))
 
-CHECKLIST_CONTRACT = '''You help a surgeon finalise the operative note for one specific completed case before it is copied into the EHR for billing. You do NOT rewrite the note in this step. Read the whole narrative and produce concrete questions the surgeon should answer so nothing is missed. Cover: every unresolved *** fill-in (quote the sentence it sits in), default statements that may not apply to this case (laterality, nerve-sparing, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, implants/devices, hemostatic agents), and routinely documented items that appear to be missing. One concrete thing per question. Never ask the surgeon to supply operative time or billing/modifier justification. Respond with ONLY a JSON object (no prose, no code fences): {"questions": [strings]}.'''
+CHECKLIST_CONTRACT = '''You help a surgeon finalise the operative note for one specific completed case before it is copied into the EHR for billing. You do NOT rewrite the note here.
+
+You are given the narrative (source_html) and a numbered list "fill_in_sentences" — each entry is a sentence that contains a *** the surgeon must complete.
+
+Return ONLY a JSON object (no prose, no code fences):
+{
+  "fill_in_questions": [strings],
+  "extra_questions": [strings]
+}
+
+"fill_in_questions": exactly one concrete question per entry in fill_in_sentences, in the SAME ORDER and SAME LENGTH. Each asks specifically what belongs in that *** (e.g. which hemostatic agent, which drain and where, the numeric blood loss, the laterality).
+"extra_questions": questions NOT tied to a *** — default statements in the note that may not apply to this case (laterality, nerve-sparing, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, implants/devices) and routinely documented items that look missing.
+
+One concrete thing per question. Never ask the surgeon to supply operative time or billing/modifier justification.'''
 
 def _chat_json(system,user_obj):
     base=ai_base_url()
@@ -150,20 +163,35 @@ def propose(source,instruction):
     else: raise ValueError('AI disabled. Manual editing remains available.')
     return _finish(source,instruction,result)
 
-def finalize_questions(source):
-    """Return targeted questions to walk the surgeon through finalising one case."""
+def _fill_sentences(source):
+    """The sentence around each *** in the narrative, in document order."""
+    text=plain(source); out=[]
+    for m in re.finditer(r'\*{3,}',text):
+        start=max(text.rfind('.',0,m.start())+1,text.rfind('\n',0,m.start())+1)
+        ends=[e for e in (text.find('.',m.end()),text.find('\n',m.end())) if e!=-1]
+        end=min(ends)+1 if ends else len(text)
+        out.append(re.sub(r'\s+',' ',text[start:end]).strip()[:280])
+    return out
+
+def finalize_checklist(source):
+    """Ordered checklist: 'review' questions about defaults/omissions first, then one
+    targeted question per *** fill-in in document order. Each item:
+    {'context': sentence or None, 'question': str, 'placeholder': bool}."""
+    fills=_fill_sentences(source)
     if settings.AI_PROVIDER=='mock':
-        qs=[]
-        for m in re.finditer(r'[^.\n]*\*{3,}[^.\n]*',plain(source)):
-            snippet=re.sub(r'\s+',' ',m.group(0)).strip()
-            if snippet: qs.append('Fill-in: "'+snippet[:180]+'" — what did you do here?')
-        qs.append('MOCK provider: no clinical review. Also confirm laterality, node dissection extent, drains, specimens, blood loss, and any implants or hemostatic agents.')
-        return qs[:30]
+        items=[{'context':None,'question':'MOCK provider: no clinical review. Confirm laterality, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, and any implants or hemostatic agents.','placeholder':False}]
+        items+=[{'context':c,'question':'What did you do here?','placeholder':True} for c in fills]
+        return items
     if settings.AI_PROVIDER not in REMOTE_PROVIDERS: raise ValueError('AI disabled.')
-    result=_chat_json(CHECKLIST_CONTRACT,{'source_html':source})
-    qs=result.get('questions') if isinstance(result,dict) else None
-    if not isinstance(qs,list) or any(not isinstance(q,str) for q in qs): raise ValueError('Invalid AI response.')
-    return [q[:2000] for q in qs[:30]]
+    result=_chat_json(CHECKLIST_CONTRACT,{'source_html':source,'fill_in_sentences':fills})
+    fq=result.get('fill_in_questions') if isinstance(result,dict) else None
+    eq=result.get('extra_questions') if isinstance(result,dict) else None
+    if not isinstance(fq,list) or not isinstance(eq,list): raise ValueError('Invalid AI response.')
+    items=[{'context':None,'question':str(q)[:2000],'placeholder':False} for q in eq[:20] if isinstance(q,str) and q.strip()]
+    for i,c in enumerate(fills):
+        q=fq[i] if i<len(fq) and isinstance(fq[i],str) and fq[i].strip() else 'What did you do here?'
+        items.append({'context':c,'question':str(q)[:2000],'placeholder':True})
+    return items
 
 def finalize_apply(source,answers):
     """answers: [{'question': str, 'answer': str}]. Integrate them into the narrative."""
