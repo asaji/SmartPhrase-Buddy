@@ -1,0 +1,1 @@
+# SmartPhrase-Buddy
