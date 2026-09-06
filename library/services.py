@@ -160,9 +160,12 @@ def _finish(source,instruction,result,allow_billing=False):
         result['warnings'].append('Difficulty alone does not establish extra time or billing eligibility.')
     supplied=(plain(source)+' '+instruction).lower()
     if allow_billing:
-        # Explicit modifier-22 flow: billing wording is allowed, but an invented numeric time is not.
-        times=re.findall(r'\b\d+\s*(?:minutes?|hours?)\b',plain(result['content']),re.I)
-        if any(t.lower() not in supplied for t in times): raise ValueError('The draft added an operative time you did not supply. Provide the exact figure or leave time out.')
+        # Explicit modifier-22 flow: billing wording is allowed, but a time figure the surgeon
+        # did not supply is not. Compare numeric values, not exact phrasing.
+        given_nums=set(re.findall(r'\d+',supplied))
+        draft_times=set(re.findall(r'\b(\d+)\s*(?:minutes?|mins?|hours?|hrs?)\b',plain(result['content']),re.I))
+        invented=sorted(draft_times-given_nums,key=int)
+        if invented: raise ValueError('The draft states an operative time ('+', '.join(invented)+' min/hr) you did not supply. Put the exact figure in the complexity factors, or leave time out — an unfilled *** stays as a placeholder.')
         result['warnings'].append('You are adding a modifier-22 justification. Confirm the documentation and medical necessity support it — this tool does not determine coding eligibility.')
     else:
         # Reject newly introduced time/billing claims unless explicitly present in source/instructions.
@@ -199,7 +202,7 @@ MOD22_CONTRACT = '''You draft the Modifier 22 (increased procedural services) st
 Documentation rules the statement MUST satisfy (CMS / payer expectations):
 - State plainly that the service required substantially greater physician work than this procedure typically requires (unusual / significantly increased difficulty) — not merely that it was "difficult" or "complex".
 - Describe the SPECIFIC additional work performed and the circumstances that made it necessary.
-- Where the surgeon supplies a quantitative measure (extra operative time, blood loss, number of adhesion planes, etc.) state it. NEVER invent a number.
+- Where the surgeon supplies a quantitative measure (extra operative time, blood loss, number of adhesion planes, etc.) state it. NEVER invent a number. If template_wording has a *** (or a blank) where a time or number belongs and the surgeon did not supply that figure, LEAVE the *** exactly as it is — do not fill it with an estimate.
 - Do NOT write that the case "qualifies for", "meets criteria for", "supports", or "warrants" modifier 22. Describe the work and circumstances; eligibility is the coder's decision.
 - Keep the surgeon's voice and tense. One paragraph, factual and specific.
 
