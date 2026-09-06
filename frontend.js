@@ -89,8 +89,25 @@ const TOKEN_RX=/@[^@\s<>]+@|\{[^{}]*\}|\*{3,}/g;
 function tokenCount(html){return (text(html).match(TOKEN_RX)||[]).length;}
 // Procedure-note field markers: [[Label: option | option | *** value]]
 const MARK_RX=/\[\[[^\[\]]+?\]\]/g;
-function markerList(html){const d=document.createElement('div');d.innerHTML=safe(html);const out=[];let i=0;blockList(d).forEach(b=>{(b.textContent.match(MARK_RX)||[]).forEach(m=>{const c=m.slice(2,-2),ci=c.indexOf(':');out.push({idx:i++,label:(ci>=0?c.slice(0,ci):c).trim(),opts:(ci>=0?c.slice(ci+1):'').split('|').map(x=>x.trim()).filter(Boolean),raw:m});});});return out;}
-function fillMarkers(html,vals){const d=document.createElement('div');d.innerHTML=safe(html);let idx=0;blockList(d).forEach(b=>{const w=document.createTreeWalker(b,NodeFilter.SHOW_TEXT);let node;while((node=w.nextNode())){const s=node.nodeValue;let out='',last=0,m;const re=new RegExp(MARK_RX.source,'g');while((m=re.exec(s))){const here=idx++;out+=s.slice(last,m.index)+(vals.has(here)?vals.get(here):m[0]);last=m.index+m[0].length;}if(last){out+=s.slice(last);if(out!==s)node.nodeValue=out;}}});return d.innerHTML;}
+function markerParts(m){const c=m.slice(2,-2),ci=c.indexOf(':');return {label:(ci>=0?c.slice(0,ci):c).trim(),opts:(ci>=0?c.slice(ci+1):'').split('|').map(x=>x.trim()).filter(Boolean)};}
+function markerList(html){const d=document.createElement('div');d.innerHTML=safe(html);const out=[];let i=0;blockList(d).forEach(b=>{(b.textContent.match(MARK_RX)||[]).forEach(m=>{out.push({idx:i++,...markerParts(m),raw:m});});});return out;}
+// Substitute chosen values. A marker that is the whole line becomes "Label: value." (label dropped
+// if the value already leads with it); a marker inside a sentence is replaced with the value alone.
+function fillMarkers(html,vals){const d=document.createElement('div');d.innerHTML=safe(html);let idx=0;
+ blockList(d).forEach(b=>{const raw=b.textContent,ms=raw.match(MARK_RX)||[];if(!ms.length)return;
+  const bare=raw.replace(MARK_RX,'').replace(/[\s.;,:•·—–-]+/g,'')==='';
+  if(bare){const parts=ms.map(m=>{const here=idx++;if(!vals.has(here))return m;const {label}=markerParts(m);let v=vals.get(here).trim();
+    if(label&&!new RegExp('^'+label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i').test(v))v=label+': '+v;
+    if(!/[.!?]$/.test(v))v+='.';return v.charAt(0).toUpperCase()+v.slice(1);});
+   b.textContent=parts.join(' ');return;}
+  const w=document.createTreeWalker(b,NodeFilter.SHOW_TEXT);let node;
+  while((node=w.nextNode())){const s=node.nodeValue;let out='',last=0,m;const re=new RegExp(MARK_RX.source,'g');
+   while((m=re.exec(s))){const here=idx++;out+=s.slice(last,m.index)+(vals.has(here)?vals.get(here):m[0]);last=m.index+m[0].length;}
+   if(last){out+=s.slice(last);if(out!==s)node.nodeValue=out;}}});
+ return d.innerHTML;}
+// After an AI polish pass, force every [[ … ]] marker back to its exact authored text — a weak
+// model sometimes rewords the options inside an unfilled marker. Positional, order preserved.
+function restoreMarkers(base,after){const orig=text(base).match(MARK_RX)||[];if(!orig.length)return after;let i=0;return after.replace(MARK_RX,()=>i<orig.length?orig[i++]:'');}
 function headings(h){const d=document.createElement('div');d.innerHTML=safe(h);return [...d.querySelectorAll('h1,h2,h3,h4')].map(x=>x.textContent.trim().toLowerCase()).filter(Boolean);}
 function guardHeadings(before,after){const lost=headings(before).filter(x=>!headings(after).includes(x));if(lost.length&&!confirm('The proposed text no longer has this heading: “'+lost.join('”, “')+'”. That usually means a whole section was removed. Apply anyway?'))throw Error('Not applied — reject this proposal and rerun to keep the section.');}
 function guardShrink(before,after){guardHeadings(before,after);
@@ -229,9 +246,9 @@ async function procedureEditor(t){
   notify(vals.size+' field'+(vals.size>1?'s':'')+' filled. '+($('#p-smooth').checked&&aiReady?'Review the AI polish below.':'Review before copying.'));
   if(!($('#p-smooth').checked&&aiReady))return;
   const base=e.getHTML();
-  const r=await api('propose/','POST',{mode:'case',ids:[t.id],content:base,instruction:"Rewrite ONLY for grammar so each line reads as a complete sentence in the author's clinical voice: for example 'Urethra: normal.' becomes 'The urethra was normal.' and 'Estimated blood loss minimal.' becomes 'Estimated blood loss was minimal.'. Do NOT delete, merge, condense, summarise, or reorder any sentence, heading or line. Reproduce every heading and every other sentence exactly. Add nothing that is not already written — no findings, measurements, steps, devices or medications. Leave every remaining [[ ... ]] and *** exactly as written. Return the complete note, every line."});
-  if(epoch!==mine)return;pushHistory('Smoothed proposal',r.proposals[0].content);$('#reviews').innerHTML='';showProvider(r.provider);
-  reviewCard($('#reviews'),r.proposals[0],async html=>{if(e.getHTML()!==base)throw Error('The note changed after this proposal. Reject and regenerate.');guardShrink(base,html);e.commands.setContent(html);$('#p-approved').checked=false;updatePc();pushHistory('Applied smoothed note');notify('Applied to temporary draft only. Review before copying.');});
+  const r=await api('propose/','POST',{mode:'case',ids:[t.id],content:base,instruction:"Rewrite ONLY for grammar so each line reads as a complete sentence in the author's clinical voice: for example 'Meatus: normal caliber.' becomes 'The meatus was of normal caliber.' and 'Estimated blood loss minimal.' becomes 'Estimated blood loss was minimal.'. When a line starts with a 'Label:' prefix and you open the sentence with that same subject, drop the redundant prefix. Do NOT delete, merge, condense, summarise, or reorder any sentence, heading or line. Reproduce every heading and every other sentence exactly. Add nothing that is not already written — no findings, measurements, steps, devices or medications. Leave every remaining [[ ... ]] and *** EXACTLY as written, including the text inside the brackets. Return the complete note, every line."});
+  if(epoch!==mine)return;const prop=r.proposals[0];prop.content=restoreMarkers(base,prop.content);pushHistory('Smoothed proposal',prop.content);$('#reviews').innerHTML='';showProvider(r.provider);
+  reviewCard($('#reviews'),prop,async html=>{if(e.getHTML()!==base)throw Error('The note changed after this proposal. Reject and regenerate.');guardShrink(base,html);e.commands.setContent(html);$('#p-approved').checked=false;updatePc();pushHistory('Applied smoothed note');notify('Applied to temporary draft only. Review before copying.');});
  });
  notify(marks.length?'Tick the findings on the right, then Generate note.':'This template has no [[ … ]] fields yet — edit on the left, or add markers to the master template.');
 }
