@@ -52,10 +52,16 @@ h3{font-size:13px}
 .tiptap p{margin:0 0 9px}
 .short .tiptap{min-height:80px}
 .warning{background:#fff7e8;border:1px solid #eed8ac;border-radius:6px;padding:9px 11px;font-size:11px;margin:9px 0}
-.diff{white-space:pre-wrap;background:#f8faf6;border:1px solid #dce2dc;padding:11px;border-radius:6px;max-height:280px;overflow:auto}
-.diff ins{background:#d4efd8;color:#205b31;text-decoration:none}
-.diff del{background:#f8dcdc;color:#852e2e}
+.diff{white-space:pre-wrap;background:#f8faf6;border:1px solid #dce2dc;padding:12px 14px;border-radius:6px;max-height:420px;overflow:auto}
+.diff.document{padding:14px 16px;line-height:1.7}
+.diff ins{background:#d4efd8;color:#12592b;text-decoration:none;border-radius:2px;padding:0 1px}
+.diff del{background:#f8dcdc;color:#8a2a2a;border-radius:2px;padding:0 1px}
 .review{margin:16px 0;border-top:2px solid #b5cdb8;padding-top:16px}
+.review-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:12px 0 5px;font-size:10px;color:#758078}
+.review-head strong{color:#243731;font-size:12px}
+.review-head .toggle-clean{margin-left:auto;font-size:10px;padding:2px 8px}
+.manual{margin:10px 0}
+.manual>summary{font-size:11px;color:#4c705b}
 #notice{position:sticky;top:0;z-index:10;background:#244f3e;color:white;padding:0 3vw}
 #notice:not(:empty){padding:9px 3vw}
 footer{max-width:1440px;margin:28px auto;padding:0 3vw;color:#7b877f;font-size:10px}

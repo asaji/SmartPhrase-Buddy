@@ -145,7 +145,10 @@ def import_data(request,data):
     return JsonResponse({'imported':len(data['items'])})
 
 @api(['GET'])
-def status(request,data): return JsonResponse({'provider':settings.AI_PROVIDER,'model':settings.AI_MODEL,'configured':settings.AI_PROVIDER=='mock' or bool(settings.AI_API_KEY and settings.AI_BASE_URL and settings.AI_MODEL),'username':request.user.username})
+def status(request,data):
+    from .services import ai_configured, ai_base_url
+    from urllib.parse import urlparse
+    return JsonResponse({'provider':settings.AI_PROVIDER,'model':settings.AI_MODEL,'endpoint':urlparse(ai_base_url()).netloc,'configured':ai_configured(),'username':request.user.username})
 
 def pending_row(row):
     return {'id':row.pk,'name':row.name,'text':row.text,'html':row.html,'flags':row.flags,'chars':len(row.text),'source_name':row.source_name,'batch':row.batch,'order':row.order}

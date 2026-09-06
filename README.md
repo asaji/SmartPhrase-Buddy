@@ -62,7 +62,27 @@ Privacy: the uploaded PDF is held in memory only (`FILE_UPLOAD_HANDLERS` is memo
 
 Default `AI_PROVIDER=mock` is a deterministic demonstration, not a clinical editing model. It only appends the supplied synthetic inflammation/scarring statement for the matching demonstration instruction; otherwise returns unchanged content with a manual-review question. It performs no external requests and must not be used to evaluate clinical AI quality.
 
-For a provider with a compatible `/chat/completions` API accepting JSON-object response format, set `AI_PROVIDER=compatible`, `AI_BASE_URL` (HTTPS URL ending in `/v1`), `AI_MODEL`, and `AI_API_KEY` in the server environment. No provider is chosen or paid account provisioned. Providers with other APIs need an adapter in `library/services.py`. Credentials are never sent to the browser. Real endpoint compatibility and model quality have not been tested without credentials.
+### OpenRouter (recommended)
+
+[OpenRouter](https://openrouter.ai) is an HTTPS OpenAI-compatible gateway to many models. In the server environment (never in the browser or in source control):
+
+```sh
+export AI_PROVIDER=openrouter
+export AI_MODEL=anthropic/claude-sonnet-4      # any slug from https://openrouter.ai/models
+export AI_API_KEY=sk-or-...                    # create at https://openrouter.ai/keys, add credit
+export AI_APP_TITLE=Phrasebook                 # optional, labels requests in your OpenRouter activity
+export AI_APP_URL=https://your.domain          # optional
+```
+
+Restart the server and open **Settings → AI configuration**; it should read `Provider: openrouter`, `Endpoint: openrouter.ai`, `Status: Configured`. The key is held only on the server and never shown. `AI_BASE_URL` is not needed for OpenRouter (it defaults to `https://openrouter.ai/api/v1`); set it only to point at a different gateway.
+
+### Any other OpenAI-compatible endpoint
+
+Set `AI_PROVIDER=compatible`, `AI_BASE_URL` (HTTPS, e.g. ending in `/v1`), `AI_MODEL`, and `AI_API_KEY`. The request is a standard `POST /chat/completions` with `temperature: 0` and a system prompt that demands a bare JSON object; the response is parsed leniently (markdown code fences and surrounding prose are tolerated), so `response_format` support is not required. Providers with a non-OpenAI API need an adapter in `library/services.py`. Endpoint compatibility and model quality have not been tested here without credentials.
+
+### Reviewing a proposal
+
+A proposal never changes anything on its own. The review card shows the change summary, any questions/warnings, and the **proposed narrative with additions highlighted and deletions struck through** (toggle **Show clean version** for the plain result). You can edit the proposed text inline before accepting. **Accept** applies it to the working draft (case) or saves it as a new master revision (selected-template update) only after you tick the review checkbox; **Reject** leaves saved content untouched. AI failure, timeout or a malformed/unsafe response returns a 502 with your text unchanged and manual editing still available.
 
 Only the source narrative and the supplied instruction are sent to the configured provider during case revision. For master updates, each selected master's narrative and the instruction are sent separately. Header, title, tags, original source and history are not included by the UI. The server accepts the current browser draft, so a user can still paste identifying content into it; removing the header does not guarantee de-identification.
 

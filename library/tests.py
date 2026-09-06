@@ -113,6 +113,36 @@ class Workflows(TestCase):
                 client.return_value.__enter__.return_value.post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(output)}}]}
                 with self.assertRaises(ValueError):propose('<p>Difficult dissection.</p>','Reflect scarring.')
 
+    def test_ai_configured_and_base_url(self):
+        from library.services import ai_configured, ai_base_url, OPENROUTER_URL
+        self.assertTrue(ai_configured())  # default mock
+        with override_settings(AI_PROVIDER='openrouter',AI_API_KEY='',AI_MODEL='x'):
+            self.assertFalse(ai_configured())
+        with override_settings(AI_PROVIDER='openrouter',AI_API_KEY='k',AI_MODEL='anthropic/claude-sonnet-4',AI_BASE_URL=''):
+            self.assertTrue(ai_configured()); self.assertEqual(ai_base_url(),OPENROUTER_URL)
+        with override_settings(AI_PROVIDER='compatible',AI_API_KEY='k',AI_MODEL='m',AI_BASE_URL=''):
+            self.assertFalse(ai_configured())
+
+    def test_parse_json_tolerates_fences_and_prose(self):
+        from library.services import _parse_json
+        self.assertEqual(_parse_json('```json\n{"a": 1}\n```'),{'a':1})
+        self.assertEqual(_parse_json('Sure, here you go:\n{"a": 2}\nthanks'),{'a':2})
+        with self.assertRaises(ValueError):_parse_json('no json here')
+
+    @override_settings(AI_PROVIDER='openrouter',AI_API_KEY='k',AI_MODEL='anthropic/claude-sonnet-4',AI_APP_URL='https://phrasebook.example')
+    def test_openrouter_call_shape_and_fenced_response(self):
+        good={'content':'<p>@AGE@ with periprostatic scarring made dissection difficult. ***</p>','summary':'reflected scarring','questions':[]}
+        with patch('library.services.httpx.Client') as client:
+            post=client.return_value.__enter__.return_value.post
+            post.return_value.json.return_value={'choices':[{'message':{'content':'```json\n'+json.dumps(good)+'\n```'}}]}
+            result=propose('<p>@AGE@ with indication ***</p>','Reflect periprostatic scarring; do not add time.')
+        url,kw=post.call_args[0],post.call_args[1]
+        self.assertEqual(url[0],'https://openrouter.ai/api/v1/chat/completions')
+        self.assertEqual(kw['headers']['Authorization'],'Bearer k')
+        self.assertEqual(kw['headers']['HTTP-Referer'],'https://phrasebook.example')
+        self.assertNotIn('response_format',kw['json'])
+        self.assertIn('scarring',result['content']); self.assertEqual(result['token_changes'],False)
+
 
 def tiny_pdf(lines):
     """Minimal single-page PDF whose text pypdf can extract. Test fixture only."""

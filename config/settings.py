@@ -38,10 +38,12 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 2_000_000
 FILE_UPLOAD_MAX_MEMORY_SIZE = 26_214_400
 FILE_UPLOAD_HANDLERS = ['django.core.files.uploadhandler.MemoryFileUploadHandler']
 AUTH_PASSWORD_VALIDATORS = [{'NAME':'django.contrib.auth.password_validation.MinimumLengthValidator'},{'NAME':'django.contrib.auth.password_validation.CommonPasswordValidator'}]
-AI_PROVIDER = os.environ.get('AI_PROVIDER','mock')
+AI_PROVIDER = os.environ.get('AI_PROVIDER','mock')  # mock | openrouter | compatible
 AI_MODEL = os.environ.get('AI_MODEL','')
 AI_API_KEY = os.environ.get('AI_API_KEY','')
-AI_BASE_URL = os.environ.get('AI_BASE_URL','')
+AI_BASE_URL = os.environ.get('AI_BASE_URL','')  # optional for openrouter; required for compatible
+AI_APP_TITLE = os.environ.get('AI_APP_TITLE','')  # optional OpenRouter attribution
+AI_APP_URL = os.environ.get('AI_APP_URL','')
 LOGGING = {'version':1,'disable_existing_loggers':False,'handlers':{'null':{'class':'logging.NullHandler'}},'loggers':{'django.request':{'handlers':['null'],'propagate':False},'httpx':{'handlers':['null'],'propagate':False},'pypdf':{'handlers':['null'],'propagate':False}}}
 
 if PRODUCTION:
