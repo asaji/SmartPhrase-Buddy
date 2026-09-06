@@ -102,7 +102,13 @@ Epic imports only the **Date of Procedure** and **Patient/MRN** lines; everythin
 
 ### Modifier 22
 
-The app is otherwise strict against inferred billing language — but a surgeon can deliberately add a **modifier-22 justification** for a specific case. In the case editor, *Modifier 22 statement* (collapsed by default) takes case-specific complexity factors and, optionally, the bracketed `[…]` hints from one of your own operative templates (e.g. `ASMOD22RALP`). `POST /api/mod22/` drafts one paragraph and inserts it **above the "Indication for Procedure" heading**, shown in the highlighted-diff review card. The `MOD22_CONTRACT` forbids inventing time, blood loss, BMI or any figure (a figure you supply is used verbatim; an invented one is rejected in `_finish(..., allow_billing=True)`) and forbids stating the case "qualifies for" the modifier — it lists the factors and leaves eligibility to the coder. A warning that the tool does not determine coding eligibility is always attached. Nothing here touches the master template or is persisted.
+The app is otherwise strict against inferred billing language — but a surgeon can deliberately add a **modifier-22 statement** for a specific case. In the case editor, *Modifier 22 statement* (collapsed by default) lets you:
+
+- pick one of your own **MOD22 templates** (only templates with `MOD22` in the title or Epic name are listed, e.g. `ASMOD22RALP`) — its full cleaned text is sent as `template_wording`, carrying the payer-mandated "unusual procedural services / substantially greater than typically required" phrasing the model must follow;
+- **tick the `[bracketed]` reason options** from that template that apply to this case (a bracket written `[A / B / C]` becomes three checkboxes); each ticked reason must appear in the statement;
+- add free-text **case-specific complexity factors**; each distinct point must appear.
+
+`POST /api/mod22/` sends `template_wording`, `required_reasons` and `complexity_factors` together and requires all three to be integrated into one paragraph, inserted **above the "Indication for Procedure" heading**, shown in the highlighted-diff review card. `MOD22_CONTRACT` forbids inventing time, blood loss, BMI or any figure (a figure you supply is used verbatim; an invented one is rejected in `_finish(..., allow_billing=True)`) and forbids stating the case "qualifies for" the modifier — it lists the work and circumstances and leaves eligibility to the coder. Warnings flag any selected reason that does not appear in the draft, a draft that never states the service was substantially greater than usual, and always that the tool does not determine coding eligibility. Nothing here touches the master template or is persisted.
 
 ### Grammar check on master save
 

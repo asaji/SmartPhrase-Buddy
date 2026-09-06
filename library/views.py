@@ -143,22 +143,21 @@ def grammar(request,data):
 
 @api(['POST'])
 def mod22(request,data):
-    """Explicit, surgeon-initiated modifier-22 justification for a transient case draft."""
-    import re as _re
+    """Explicit, surgeon-initiated modifier-22 statement for a transient case draft."""
     from .services import clean, mod22_statement
     content=clean(data.get('content',''))
     if not plain(content): raise ValueError('No narrative to add to.')
     factors=str(data.get('factors','')).strip()[:10000]
-    suggestions=''
+    reasons=data.get('reasons',[])
+    if not isinstance(reasons,list) or any(not isinstance(r,str) for r in reasons) or len(reasons)>30: raise ValueError('Invalid reasons.')
+    reasons=[r.strip()[:300] for r in reasons if r.strip()]
+    template_text=''
     tid=data.get('template_id')
     if tid is not None:
-        t=own(request,tid)
-        suggestions='\n'.join(_re.findall(r'\[[^\[\]\n]{2,300}\]',plain(t.content)))[:10000]
-    if not factors and not suggestions:
-        raise ValueError('Describe the case-specific complexity factors, or pick a template with bracketed suggestions.')
+        template_text=clean(own(request,tid).content)[:12000]
     try:
-        result=mod22_statement(content,factors,suggestions)
-    except ValueError as e:
+        result=mod22_statement(content,factors,template_text,reasons)
+    except ValueError:
         raise
     except Exception:
         return JsonResponse({'error':'Modifier-22 draft unavailable or returned an unsafe response. Your text is unchanged.'},status=502)

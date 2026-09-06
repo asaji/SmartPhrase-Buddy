@@ -68,6 +68,9 @@ h3{font-size:13px}
 #freetext>summary,#mod22>summary{font-weight:600;color:#25493c}
 #mod22[open]>summary{color:#8a5a1a}
 code{font-family:ui-monospace,Menlo,monospace;font-size:.92em;background:#eef2ec;padding:0 3px;border-radius:3px}
+#mod22-reasons{margin:4px 0 8px}
+.reason{display:flex;gap:7px;align-items:flex-start;font-weight:400;font-size:11px;margin:4px 0}
+.reason input{width:auto;margin-top:2px}
 #ph-count{opacity:.7;font-weight:400}
 #strip-tokens:disabled{opacity:.45}
 .check{border:1px solid #e1e6df;border-radius:7px;padding:9px 11px;margin-top:8px}

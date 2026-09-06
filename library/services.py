@@ -194,16 +194,24 @@ def grammar_pass(source):
         raise ValueError('AI disabled.')
     return _finish(source,'',result)
 
-MOD22_CONTRACT = '''You draft a Modifier 22 (increased procedural services) justification paragraph for one specific completed case. It goes ABOVE the "Indication for Procedure" heading in the operative note.
+MOD22_CONTRACT = '''You draft the Modifier 22 (increased procedural services) statement for one specific completed case. It goes ABOVE the "Indication for Procedure" heading in the operative note.
 
-Use ONLY: the surgeon's complexity_factors, any template_suggestions (bracketed hints from the surgeon's own modifier-22 template), and what is already in source_html.
+Documentation rules the statement MUST satisfy (CMS / payer expectations):
+- State plainly that the service required substantially greater physician work than this procedure typically requires (unusual / significantly increased difficulty) — not merely that it was "difficult" or "complex".
+- Describe the SPECIFIC additional work performed and the circumstances that made it necessary.
+- Where the surgeon supplies a quantitative measure (extra operative time, blood loss, number of adhesion planes, etc.) state it. NEVER invent a number.
+- Do NOT write that the case "qualifies for", "meets criteria for", "supports", or "warrants" modifier 22. Describe the work and circumstances; eligibility is the coder's decision.
+- Keep the surgeon's voice and tense. One paragraph, factual and specific.
 
-Rules:
-- Do NOT invent operative time, blood loss, BMI, adhesion grade, or any number. If the surgeon supplies a figure you may state it verbatim; otherwise use no figure.
-- Do NOT write that the case "qualifies for", "meets criteria for", or "warrants" modifier 22. Describe the specific factors that made this service substantially greater than the typical procedure and let the coder decide.
-- Keep the surgeon's voice and tense. One paragraph, factual, specific.
+Inputs:
+- template_wording: the surgeon's own modifier-22 template text. If present, FOLLOW its phrasing and structure — it carries the mandated language. Adapt only the case-specific portions and drop bracket markers.
+- required_reasons: reasons the surgeon selected from that template. EVERY one must appear in the statement.
+- complexity_factors: free-text case details from the surgeon. EVERY distinct point must appear.
+- source_html: the operative note, for context only — do not restate large parts of it.
 
-Return the COMPLETE narrative with exactly one new paragraph inserted directly above the "Indication for Procedure" heading (if the note has no such heading, place it just before the first operative/indication content). Change nothing else; keep every Epic token verbatim.
+Weave template_wording, required_reasons AND complexity_factors together into one coherent paragraph. Do not add a reason that is not in required_reasons or complexity_factors. If a supplied point cannot be placed, add a short note to "questions" rather than dropping it.
+
+Return the COMPLETE narrative with the one new paragraph inserted directly above the "Indication for Procedure" heading (or before the first operative/indication content if there is no such heading). Change nothing else; keep every Epic token verbatim.
 
 Respond with ONLY a JSON object (no prose, no code fences): {"content": full HTML, "summary": one sentence, "questions": array of strings}.'''
 
@@ -211,18 +219,29 @@ def _insert_above_indication(source,paragraph):
     m=re.search(r'<(h[1-6]|p)[^>]*>\s*indication for procedure',source,re.I)
     return source[:m.start()]+paragraph+source[m.start():] if m else paragraph+source
 
-def mod22_statement(source,factors,suggestions=''):
-    """Explicit, surgeon-initiated modifier-22 justification. Never inferred."""
-    context=(factors+' '+suggestions).strip()
-    if not context: raise ValueError('Describe the case-specific complexity factors, or choose a template with bracketed suggestions.')
+def mod22_statement(source,factors,template_text='',selected_reasons=None):
+    """Explicit, surgeon-initiated modifier-22 statement. Never inferred.
+
+    template_text: full text of the surgeon's MOD22 template (carries the mandated
+    CMS phrasing). selected_reasons: the bracketed reasons they ticked."""
+    selected_reasons=[r.strip() for r in (selected_reasons or []) if r and r.strip()][:30]
+    context=' '.join([factors,' '.join(selected_reasons),template_text]).strip()
+    if not factors.strip() and not selected_reasons:
+        raise ValueError('Describe the case-specific complexity factors, or select at least one reason from your template.')
     if settings.AI_PROVIDER=='mock':
-        para='<p><strong>Modifier 22 — increased procedural services:</strong> MOCK provider: no justification generated. Supplied factors: '+clean(factors)+(' | template hints: '+clean(suggestions) if suggestions else '')+'</p>'
-        result={'content':_insert_above_indication(source,para),'summary':'MOCK: inserted a placeholder modifier-22 line above the indication.','questions':['MOCK provider — write the actual justification yourself and confirm coding support.']}
+        bits=[b for b in [clean(factors),'; '.join(clean(r) for r in selected_reasons)] if b]
+        para='<p><strong>Modifier 22 — increased procedural services:</strong> This procedure required substantially greater physician work than usual. MOCK provider — no compliant wording generated. Supplied: '+' | '.join(bits)+'</p>'
+        result={'content':_insert_above_indication(source,para),'summary':'MOCK: placeholder modifier-22 line inserted above the indication.','questions':['MOCK provider — write the CMS-compliant statement yourself and confirm coding support.']}
     elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
-        result=_chat_json(MOD22_CONTRACT,{'task':'Draft the modifier-22 justification paragraph and return the complete narrative with it inserted above the "Indication for Procedure" heading.','complexity_factors':factors,'template_suggestions':suggestions,'source_html':source})
+        result=_chat_json(MOD22_CONTRACT,{'task':'Draft the modifier-22 statement and return the complete narrative with it inserted above the "Indication for Procedure" heading.','template_wording':template_text[:8000],'required_reasons':selected_reasons,'complexity_factors':factors,'source_html':source})
     else:
         raise ValueError('AI disabled.')
-    return _finish(source,context,result,allow_billing=True)
+    out=_finish(source,context,result,allow_billing=True)
+    body=plain(out['content']).lower()
+    missing=[r for r in selected_reasons if not any(w in body for w in re.findall(r'[a-z]{5,}',r.lower()))]
+    if missing: out['warnings'].append('These selected reasons may not be reflected in the draft — check: '+'; '.join(missing)[:400])
+    if not re.search(r'substantially|significantly|unusual|greater than|more than typical|increased (physician )?work',body): out['warnings'].append('The draft may not state the service was substantially greater than usual — confirm it meets your payer\'s wording.')
+    return out
 
 def _fill_sentences(source):
     """The sentence around every unresolved Epic placeholder (*** , @TOKEN@ , {...})

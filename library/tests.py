@@ -150,11 +150,14 @@ class Workflows(TestCase):
         self.assertEqual(self.call('mod22/',{'content':self.a['content']}).status_code,400)   # no factors, no template
         self.assertEqual(Client().post('/api/mod22/',data='{}',content_type='application/json').status_code,401)
 
-    def test_mod22_pulls_template_brackets(self):
-        tpl=self.create('Mod22 RALP',kind='operative',epic_name='ASMOD22RALP',content='<p>Consider [dense periprostatic adhesions] and [prior radiation] and [extensive lysis of adhesions].</p>')
-        r=self.call('mod22/',{'content':self.a['content'],'factors':'','template_id':tpl['id']})
+    def test_mod22_uses_template_and_selected_reasons(self):
+        tpl=self.create('Mod22 RALP',kind='other',epic_name='ASMOD22RALP',content='<p>This procedure was substantially greater than typically required due to: [dense periprostatic adhesions], [prior radiation], [extensive lysis of adhesions].</p>')
+        # picking a reason but no free-text factors is allowed
+        r=self.call('mod22/',{'content':self.a['content'],'factors':'','template_id':tpl['id'],'reasons':['dense periprostatic adhesions']})
         self.assertEqual(r.status_code,200,r.content)
-        self.assertIn('dense periprostatic adhesions',r.json()['proposal']['content'])   # bracket hint carried through (mock echoes it)
+        self.assertIn('dense periprostatic adhesions',r.json()['proposal']['content'])   # selected reason carried through
+        # neither a factor nor a reason -> 400
+        self.assertEqual(self.call('mod22/',{'content':self.a['content'],'template_id':tpl['id'],'reasons':[]}).status_code,400)
 
     @override_settings(AI_PROVIDER='gemini',AI_API_KEY='k',AI_MODEL='gemini-2.5-flash')
     def test_mod22_allows_supplied_time_rejects_invented(self):
