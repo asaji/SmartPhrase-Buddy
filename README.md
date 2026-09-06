@@ -76,6 +76,18 @@ export AI_APP_URL=https://your.domain          # optional
 
 Restart the server and open **Settings → AI configuration**; it should read `Provider: openrouter`, `Endpoint: openrouter.ai`, `Status: Configured`. The key is held only on the server and never shown. `AI_BASE_URL` is not needed for OpenRouter (it defaults to `https://openrouter.ai/api/v1`); set it only to point at a different gateway.
 
+### Google Gemini
+
+Gemini exposes an OpenAI-compatible endpoint, so no adapter is needed. Get a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey), then:
+
+```sh
+export AI_PROVIDER=gemini
+export AI_MODEL=gemini-2.5-flash          # or gemini-2.5-pro, gemini-2.0-flash, ...
+export AI_API_KEY=...                     # server only
+```
+
+`AI_BASE_URL` defaults to `https://generativelanguage.googleapis.com/v1beta/openai`; set it only to route through a proxy. The same request shape (`temperature: 0`, lenient JSON parsing) is used. You can also reach Gemini through OpenRouter instead (`AI_PROVIDER=openrouter`, `AI_MODEL=google/gemini-2.5-flash`).
+
 ### Any other OpenAI-compatible endpoint
 
 Set `AI_PROVIDER=compatible`, `AI_BASE_URL` (HTTPS, e.g. ending in `/v1`), `AI_MODEL`, and `AI_API_KEY`. The request is a standard `POST /chat/completions` with `temperature: 0` and a system prompt that demands a bare JSON object; the response is parsed leniently (markdown code fences and surrounding prose are tolerated), so `response_format` support is not required. Providers with a non-OpenAI API need an adapter in `library/services.py`. Endpoint compatibility and model quality have not been tested here without credentials.

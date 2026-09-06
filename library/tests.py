@@ -114,14 +114,30 @@ class Workflows(TestCase):
                 with self.assertRaises(ValueError):propose('<p>Difficult dissection.</p>','Reflect scarring.')
 
     def test_ai_configured_and_base_url(self):
-        from library.services import ai_configured, ai_base_url, OPENROUTER_URL
+        from library.services import ai_configured, ai_base_url, OPENROUTER_URL, GEMINI_URL
         self.assertTrue(ai_configured())  # default mock
         with override_settings(AI_PROVIDER='openrouter',AI_API_KEY='',AI_MODEL='x'):
             self.assertFalse(ai_configured())
         with override_settings(AI_PROVIDER='openrouter',AI_API_KEY='k',AI_MODEL='anthropic/claude-sonnet-4',AI_BASE_URL=''):
             self.assertTrue(ai_configured()); self.assertEqual(ai_base_url(),OPENROUTER_URL)
+        with override_settings(AI_PROVIDER='gemini',AI_API_KEY='k',AI_MODEL='gemini-2.5-flash',AI_BASE_URL=''):
+            self.assertTrue(ai_configured()); self.assertEqual(ai_base_url(),GEMINI_URL)
+        with override_settings(AI_PROVIDER='gemini',AI_API_KEY='k',AI_MODEL='gemini-2.5-flash',AI_BASE_URL='https://proxy.example/v1'):
+            self.assertEqual(ai_base_url(),'https://proxy.example/v1')  # explicit base still wins
         with override_settings(AI_PROVIDER='compatible',AI_API_KEY='k',AI_MODEL='m',AI_BASE_URL=''):
             self.assertFalse(ai_configured())
+
+    @override_settings(AI_PROVIDER='gemini',AI_API_KEY='g',AI_MODEL='gemini-2.5-flash')
+    def test_gemini_call_shape(self):
+        good={'content':'<p>@AGE@ *** revised.</p>','summary':'ok','questions':[]}
+        with patch('library.services.httpx.Client') as client:
+            post=client.return_value.__enter__.return_value.post
+            post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(good)}}]}
+            propose('<p>@AGE@ ***</p>','Reflect scarring; no time added.')
+        url,kw=post.call_args[0],post.call_args[1]
+        self.assertEqual(url[0],'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions')
+        self.assertEqual(kw['headers']['Authorization'],'Bearer g')
+        self.assertNotIn('HTTP-Referer',kw['headers'])  # openrouter-only
 
     def test_parse_json_tolerates_fences_and_prose(self):
         from library.services import _parse_json
