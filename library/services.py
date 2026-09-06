@@ -197,48 +197,56 @@ def grammar_pass(source):
         raise ValueError('AI disabled.')
     return _finish(source,'',result)
 
-MOD22_CONTRACT = '''You draft the Modifier 22 (increased procedural services) statement for one specific completed case. It goes ABOVE the "Indication for Procedure" heading in the operative note.
+MOD22_CONTRACT = '''You draft ONLY the Modifier 22 (increased procedural services) statement for one specific completed case — one HTML paragraph. It will be placed above the "Indication for Procedure" heading by the caller; do not return the rest of the note.
 
 Documentation rules the statement MUST satisfy (CMS / payer expectations):
-- State plainly that the service required substantially greater physician work than this procedure typically requires (unusual / significantly increased difficulty) — not merely that it was "difficult" or "complex".
+- Begin with the exact label "Unusual Procedure:" (make it <strong>). Then state that the work performed to provide this service was substantially greater than typically required for this procedure — name the procedure from source_html. Do not just say it was "difficult" or "complex".
 - Describe the SPECIFIC additional work performed and the circumstances that made it necessary.
-- Where the surgeon supplies a quantitative measure (extra operative time, blood loss, number of adhesion planes, etc.) state it. NEVER invent a number. If template_wording has a *** (or a blank) where a time or number belongs and the surgeon did not supply that figure, LEAVE the *** exactly as it is — do not fill it with an estimate.
+- Where the surgeon supplies a quantitative measure (extra operative time, blood loss, etc.) state it. NEVER invent a number. If no figure is supplied, state none — and if template_wording has a *** where a figure belongs, leave the *** exactly as it is.
 - Do NOT write that the case "qualifies for", "meets criteria for", "supports", or "warrants" modifier 22. Describe the work and circumstances; eligibility is the coder's decision.
-- Keep the surgeon's voice and tense. One paragraph, factual and specific.
+- Keep the surgeon's voice and tense. One paragraph.
 
 Inputs:
-- template_wording: the surgeon's own modifier-22 template text. If present, FOLLOW its phrasing and structure — it carries the mandated language. Adapt only the case-specific portions and drop bracket markers.
-- required_reasons: reasons the surgeon selected from that template. EVERY one must appear in the statement.
+- template_wording: the surgeon's own modifier-22 template text. If present, FOLLOW its phrasing and structure — it carries the mandated language; adapt only the case-specific portions and drop bracket markers. If ABSENT, write the statement yourself following the rules above (still beginning "Unusual Procedure:").
+- required_reasons: reasons the surgeon selected. EVERY one must appear.
 - complexity_factors: free-text case details from the surgeon. EVERY distinct point must appear.
-- source_html: the operative note, for context only — do not restate large parts of it.
+- source_html: the operative note, for context only — do not restate it.
 
-Weave template_wording, required_reasons AND complexity_factors together into one coherent paragraph. Do not add a reason that is not in required_reasons or complexity_factors. If a supplied point cannot be placed, add a short note to "questions" rather than dropping it.
+Do not add a reason that is not in required_reasons or complexity_factors. If a supplied point cannot be placed, add a short note to "questions".
 
-Return the COMPLETE narrative with the one new paragraph inserted directly above the "Indication for Procedure" heading (or before the first operative/indication content if there is no such heading). Change nothing else; keep every Epic token verbatim.
-
-Respond with ONLY a JSON object (no prose, no code fences): {"content": full HTML, "summary": one sentence, "questions": array of strings}.'''
+Respond with ONLY a JSON object (no prose, no code fences): {"statement": "<p>…the full statement, one paragraph…</p>", "summary": "one sentence", "questions": array of strings}.'''
 
 def _insert_above_indication(source,paragraph):
     m=re.search(r'<(h[1-6]|p)[^>]*>\s*indication for procedure',source,re.I)
-    return source[:m.start()]+paragraph+source[m.start():] if m else paragraph+source
+    spaced=paragraph+'<p></p>'  # blank line after the statement
+    return source[:m.start()]+spaced+source[m.start():] if m else spaced+source
 
 def mod22_statement(source,factors,template_text='',selected_reasons=None):
-    """Explicit, surgeon-initiated modifier-22 statement. Never inferred.
-
-    template_text: full text of the surgeon's MOD22 template (carries the mandated
-    CMS phrasing). selected_reasons: the bracketed reasons they ticked."""
+    """Explicit, surgeon-initiated modifier-22 statement. Never inferred. The model
+    returns only the statement paragraph; the caller places it (with a trailing
+    blank line) above the "Indication for Procedure" heading."""
     selected_reasons=[r.strip() for r in (selected_reasons or []) if r and r.strip()][:30]
     context=' '.join([factors,' '.join(selected_reasons),template_text]).strip()
     if not factors.strip() and not selected_reasons:
         raise ValueError('Describe the case-specific complexity factors, or select at least one reason from your template.')
     if settings.AI_PROVIDER=='mock':
         bits=[b for b in [clean(factors),'; '.join(clean(r) for r in selected_reasons)] if b]
-        para='<p><strong>Modifier 22 — increased procedural services:</strong> This procedure required substantially greater physician work than usual. MOCK provider — no compliant wording generated. Supplied: '+' | '.join(bits)+'</p>'
-        result={'content':_insert_above_indication(source,para),'summary':'MOCK: placeholder modifier-22 line inserted above the indication.','questions':['MOCK provider — write the CMS-compliant statement yourself and confirm coding support.']}
+        stmt='<p><strong>Unusual Procedure:</strong> The work performed to provide this service was substantially greater than typically required. MOCK provider — no compliant wording generated. Supplied: '+' | '.join(bits)+'</p>'
+        summary='MOCK: placeholder modifier-22 statement inserted above the indication.'
+        questions=['MOCK provider — write the CMS-compliant statement yourself and confirm coding support.']
     elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
-        result=_chat_json(MOD22_CONTRACT,{'task':'Draft the modifier-22 statement and return the complete narrative with it inserted above the "Indication for Procedure" heading.','template_wording':template_text[:8000],'required_reasons':selected_reasons,'complexity_factors':factors,'source_html':source})
+        r=_chat_json(MOD22_CONTRACT,{'task':'Draft only the modifier-22 statement paragraph.','template_wording':template_text[:8000],'required_reasons':selected_reasons,'complexity_factors':factors,'source_html':source})
+        stmt=str((r.get('statement') if isinstance(r,dict) else '') or (r.get('content') if isinstance(r,dict) else '') or '')
+        summary=str((r.get('summary') if isinstance(r,dict) else '') or 'Modifier-22 statement drafted.')[:5000]
+        questions=r.get('questions') if isinstance(r,dict) and isinstance(r.get('questions'),list) else []
     else:
         raise ValueError('AI disabled.')
+    stmt=clean(stmt).strip()
+    if not plain(stmt): raise ValueError('The modifier-22 draft came back empty.')
+    if not stmt.lstrip().lower().startswith('<p'): stmt='<p>'+stmt+'</p>'
+    if 'unusual procedure' not in plain(stmt).lower():
+        stmt=re.sub(r'^(\s*<p[^>]*>)',r'\1<strong>Unusual Procedure:</strong> ',stmt,count=1,flags=re.I) or '<p><strong>Unusual Procedure:</strong></p>'+stmt
+    result={'content':_insert_above_indication(source,stmt),'summary':summary,'questions':[str(q)[:2000] for q in questions[:30] if isinstance(q,str)]}
     out=_finish(source,context,result,allow_billing=True)
     body=plain(out['content']).lower()
     missing=[r for r in selected_reasons if not any(w in body for w in re.findall(r'[a-z]{5,}',r.lower()))]
