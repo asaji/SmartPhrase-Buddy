@@ -1,0 +1,18 @@
+[Unit]
+Description=SmartPhrase Buddy
+After=network.target
+[Service]
+User=smartphrase
+Group=smartphrase
+WorkingDirectory=/opt/smartphrase-buddy
+EnvironmentFile=/etc/smartphrase-buddy.env
+ExecStart=/opt/smartphrase-buddy/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8765 --workers 1 --threads 4 --timeout 90
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/smartphrase-buddy
+[Install]
+WantedBy=multi-user.target

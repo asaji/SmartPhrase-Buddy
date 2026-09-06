@@ -169,7 +169,7 @@ class Workflows(TestCase):
         self.assertEqual(_parse_json('Sure, here you go:\n{"a": 2}\nthanks'),{'a':2})
         with self.assertRaises(ValueError):_parse_json('no json here')
 
-    @override_settings(AI_PROVIDER='openrouter',AI_API_KEY='k',AI_MODEL='anthropic/claude-sonnet-4',AI_APP_URL='https://phrasebook.example')
+    @override_settings(AI_PROVIDER='openrouter',AI_API_KEY='k',AI_MODEL='anthropic/claude-sonnet-4',AI_APP_URL='https://smartphrase.example')
     def test_openrouter_call_shape_and_fenced_response(self):
         good={'content':'<p>@AGE@ with periprostatic scarring made dissection difficult. ***</p>','summary':'reflected scarring','questions':[]}
         with patch('library.services.httpx.Client') as client:
@@ -179,7 +179,7 @@ class Workflows(TestCase):
         url,kw=post.call_args[0],post.call_args[1]
         self.assertEqual(url[0],'https://openrouter.ai/api/v1/chat/completions')
         self.assertEqual(kw['headers']['Authorization'],'Bearer k')
-        self.assertEqual(kw['headers']['HTTP-Referer'],'https://phrasebook.example')
+        self.assertEqual(kw['headers']['HTTP-Referer'],'https://smartphrase.example')
         self.assertNotIn('response_format',kw['json'])
         self.assertIn('scarring',result['content']); self.assertEqual(result['token_changes'],False)
 

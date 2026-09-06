@@ -1,4 +1,4 @@
-# Phrasebook
+# SmartPhrase Buddy
 
 Private, single-user SmartPhrase library and temporary operative narrative editor. No Epic connection, public signup, automatic submission, or deployment. Development examples are synthetic; original screenshots were not supplied.
 
@@ -43,7 +43,7 @@ npm run build
 - Epic SmartPhrase **PDF import**: upload an Epic "print SmartPhrases" export once; detected phrases are saved as a persistent, owner-scoped **import queue** you work through over multiple sessions. Each entry (name, extracted text, per-segment flags for letterhead / disclaimer / fixed age / missing tokens / bracket placeholders) stays an unapproved draft; approving a template from it or skipping it removes it from the queue. Re-uploading the same PDF adds nothing. The PDF file is parsed in memory and never stored or logged; nothing is silently repaired. See "PDF import" below.
 - Master editing, full revision history, restore as a new revision, stale-save protection.
 - Selected-template proposals, per-template text diff, manually editable proposal, explicit acceptance/rejection, scope enforcement and token-change review.
-- Separate in-memory operative drafts, iterative free-text AI instructions, manual editing, undo/redo, copy approval checkbox, Finish and clear, navigation warning.
+- Separate in-memory operative drafts, iterative free-text AI instructions, line-by-line case checklist, manual editing, undo/redo, copy approval checkbox, Finish and clear, navigation warning. A session-only **draft history** keeps every generated proposal and applied change (view / copy / restore); it lives in a JS array — no database, `localStorage` or `sessionStorage` — and is gone on Finish and clear or navigation. None of the case flow writes to the master template or its revisions (enforced server-side and covered by tests).
 - JSON portable import/export with complete revision metadata and timestamps. Import adds independent copies; it never overwrites existing templates. Imports are atomic and capped at 500 templates / about 1.9 MB; use database restore for larger libraries.
 - Login/logout, password change, no public signup, authenticated API, ownership checks, CSRF, no-store responses, strict content security policy, request size limits, login/AI rate limits.
 - Configurable mock or HTTPS chat-completions-compatible AI provider, timeout and malformed-result handling, server-only secrets.
@@ -70,7 +70,7 @@ Default `AI_PROVIDER=mock` is a deterministic demonstration, not a clinical edit
 export AI_PROVIDER=openrouter
 export AI_MODEL=anthropic/claude-sonnet-4      # any slug from https://openrouter.ai/models
 export AI_API_KEY=sk-or-...                    # create at https://openrouter.ai/keys, add credit
-export AI_APP_TITLE=Phrasebook                 # optional, labels requests in your OpenRouter activity
+export AI_APP_TITLE="SmartPhrase Buddy"                 # optional, labels requests in your OpenRouter activity
 export AI_APP_URL=https://your.domain          # optional
 ```
 
@@ -136,7 +136,7 @@ Portable JSON export includes templates, metadata, original source and every rev
 For a complete consistent SQLite backup including authentication data:
 
 ```sh
-python scripts/backup.py /private/approved-path/phrasebook-2026-09-05.sqlite3
+python scripts/backup.py /private/approved-path/smartphrase-buddy-2026-09-05.sqlite3
 ```
 
 Use an encrypted/private location and appropriate retention. For full restore, stop the app, preserve a backup of the current database, copy the selected backup to DATABASE_PATH with owner-only permissions, run migrations using the matching application version, then restart and verify login, template counts and revisions. Test recovery before relying on backups. The SQLite backup API avoids inconsistent copies of a live database.

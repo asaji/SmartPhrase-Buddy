@@ -116,7 +116,7 @@ def _chat_json(system,user_obj):
     if not settings.AI_API_KEY or not settings.AI_MODEL or not base.startswith('https://'): raise ValueError('AI provider is not configured.')
     headers={'Authorization':'Bearer '+settings.AI_API_KEY}
     if settings.AI_PROVIDER=='openrouter':
-        headers['X-Title']=settings.AI_APP_TITLE or 'Phrasebook'
+        headers['X-Title']=settings.AI_APP_TITLE or 'SmartPhrase Buddy'
         if settings.AI_APP_URL: headers['HTTP-Referer']=settings.AI_APP_URL
     with httpx.Client(timeout=90,follow_redirects=False) as client:
         response=client.post(base.rstrip('/')+'/chat/completions',headers=headers,json={'model':settings.AI_MODEL,'temperature':0,'max_tokens':8192,'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(user_obj)}]})

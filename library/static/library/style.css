@@ -52,13 +52,14 @@ h3{font-size:13px}
 .tiptap p{margin:0 0 9px}
 .short .tiptap{min-height:80px}
 .warning{background:#fff7e8;border:1px solid #eed8ac;border-radius:6px;padding:9px 11px;font-size:11px;margin:9px 0}
-.diff{white-space:pre-wrap;background:#f8faf6;border:1px solid #dce2dc;padding:12px 14px;border-radius:6px;max-height:420px;overflow:auto}
-.diff.document{padding:14px 16px;line-height:1.7}
-.diff ins{background:#d4efd8;color:#12592b;text-decoration:none;border-radius:2px;padding:0 1px}
-.diff del{background:#f8dcdc;color:#8a2a2a;border-radius:2px;padding:0 1px}
+.diff{white-space:pre-wrap;background:#f8faf6;border:1px solid #dce2dc;padding:14px 16px;border-radius:6px;max-height:60vh;overflow:auto}
+.diff.document{padding:20px 24px;font-size:14px;line-height:1.85;max-height:72vh}
+.diff ins{background:#c9efd0;color:#12592b;text-decoration:none;border-radius:2px;padding:0 1px}
+.diff del{background:#f6d4d4;color:#8a2a2a;border-radius:2px;padding:0 1px}
 .review{margin:16px 0;border-top:2px solid #b5cdb8;padding-top:16px}
-.review-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:12px 0 5px;font-size:10px;color:#758078}
-.review-head strong{color:#243731;font-size:12px}
+#reviews{margin-top:16px}
+.review-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:14px 0 6px;font-size:11px;color:#758078}
+.review-head strong{color:#243731;font-size:13px}
 .review-head .toggle-clean{margin-left:auto;font-size:10px;padding:2px 8px}
 .manual{margin:10px 0}
 .manual>summary{font-size:11px;color:#4c705b}
@@ -71,6 +72,10 @@ h3{font-size:13px}
 .check-opts{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:6px}
 .check-opts label{margin:0;font-weight:400;font-size:10px;display:inline-flex;gap:5px;align-items:center}
 .check-opts select{width:auto}
+.hist{border:1px solid #e1e6df;border-radius:7px;padding:8px 10px;margin-top:6px}
+.hist-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hist .actions{margin-top:5px}
+.hist-doc{margin-top:8px;border-top:1px solid #eef1ec;padding-top:8px;max-height:40vh;overflow:auto}
 #notice{position:sticky;top:0;z-index:10;background:#244f3e;color:white;padding:0 3vw}
 #notice:not(:empty){padding:9px 3vw}
 footer{max-width:1440px;margin:28px auto;padding:0 3vw;color:#7b877f;font-size:10px}
