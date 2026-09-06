@@ -197,7 +197,7 @@ def grammar_pass(source):
         raise ValueError('AI disabled.')
     return _finish(source,'',result)
 
-MOD22_CONTRACT = '''You draft ONLY the Modifier 22 (increased procedural services) statement for one specific completed case — one HTML paragraph. It will be placed above the "Indication for Procedure" heading by the caller; do not return the rest of the note.
+MOD22_CONTRACT = '''You draft ONLY the Modifier 22 (increased procedural services) statement for one specific completed case — one HTML paragraph. The caller appends it to the end of the operative note; do not return the rest of the note.
 
 Documentation rules the statement MUST satisfy (CMS / payer expectations):
 - Begin with the exact label "Unusual Procedure:" (make it <strong>). Then state that the work performed to provide this service was substantially greater than typically required for this procedure — name the procedure from source_html. Do not just say it was "difficult" or "complex".
@@ -216,15 +216,10 @@ Do not add a reason that is not in required_reasons or complexity_factors. If a 
 
 Respond with ONLY a JSON object (no prose, no code fences): {"statement": "<p>…the full statement, one paragraph…</p>", "summary": "one sentence", "questions": array of strings}.'''
 
-def _insert_above_indication(source,paragraph):
-    m=re.search(r'<(h[1-6]|p)[^>]*>\s*indication for procedure',source,re.I)
-    spaced=paragraph+'<p></p>'  # blank line after the statement
-    return source[:m.start()]+spaced+source[m.start():] if m else spaced+source
-
 def mod22_statement(source,factors,template_text='',selected_reasons=None):
     """Explicit, surgeon-initiated modifier-22 statement. Never inferred. The model
-    returns only the statement paragraph; the caller places it (with a trailing
-    blank line) above the "Indication for Procedure" heading."""
+    returns only the statement paragraph; the caller appends it (after a blank
+    line) to the end of the operative note."""
     selected_reasons=[r.strip() for r in (selected_reasons or []) if r and r.strip()][:30]
     context=' '.join([factors,' '.join(selected_reasons),template_text]).strip()
     if not factors.strip() and not selected_reasons:
@@ -232,7 +227,7 @@ def mod22_statement(source,factors,template_text='',selected_reasons=None):
     if settings.AI_PROVIDER=='mock':
         bits=[b for b in [clean(factors),'; '.join(clean(r) for r in selected_reasons)] if b]
         stmt='<p><strong>Unusual Procedure:</strong> The work performed to provide this service was substantially greater than typically required. MOCK provider — no compliant wording generated. Supplied: '+' | '.join(bits)+'</p>'
-        summary='MOCK: placeholder modifier-22 statement inserted above the indication.'
+        summary='MOCK: placeholder modifier-22 statement appended to the end of the note.'
         questions=['MOCK provider — write the CMS-compliant statement yourself and confirm coding support.']
     elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
         r=_chat_json(MOD22_CONTRACT,{'task':'Draft only the modifier-22 statement paragraph.','template_wording':template_text[:8000],'required_reasons':selected_reasons,'complexity_factors':factors,'source_html':source})
@@ -246,7 +241,7 @@ def mod22_statement(source,factors,template_text='',selected_reasons=None):
     if not stmt.lstrip().lower().startswith('<p'): stmt='<p>'+stmt+'</p>'
     if 'unusual procedure' not in plain(stmt).lower():
         stmt=re.sub(r'^(\s*<p[^>]*>)',r'\1<strong>Unusual Procedure:</strong> ',stmt,count=1,flags=re.I) or '<p><strong>Unusual Procedure:</strong></p>'+stmt
-    result={'content':_insert_above_indication(source,stmt),'summary':summary,'questions':[str(q)[:2000] for q in questions[:30] if isinstance(q,str)]}
+    result={'content':source.rstrip()+'<p></p>'+stmt,'summary':summary,'questions':[str(q)[:2000] for q in questions[:30] if isinstance(q,str)]}
     out=_finish(source,context,result,allow_billing=True)
     body=plain(out['content']).lower()
     missing=[r for r in selected_reasons if not any(w in body for w in re.findall(r'[a-z]{5,}',r.lower()))]

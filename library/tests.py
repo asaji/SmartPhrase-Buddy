@@ -143,8 +143,9 @@ class Workflows(TestCase):
         self.assertEqual(r.status_code,200,r.content)
         p=r.json()['proposal']
         self.assertIn('Unusual Procedure:',p['content'])                              # CMS-mandated label
-        self.assertLess(p['content'].index('Unusual Procedure'),p['content'].index('Indication for Procedure'))  # above the indication
-        self.assertRegex(p['content'],r'</p>\s*<p>\s*</p>\s*<h2[^>]*>\s*Indication')  # blank line after the statement
+        self.assertGreater(p['content'].index('Unusual Procedure'),p['content'].index('Indication for Procedure'))  # appended at the end
+        self.assertRegex(p['content'],r'</p>\s*<p>\s*</p>\s*<p>\s*<strong>Unusual Procedure')  # blank line before the statement
+        self.assertTrue(p['content'].rstrip().endswith('</p>'))
         self.assertTrue(any('coding eligibility' in w for w in p['warnings']))
         self.assertEqual(p['source'],self.a['content'])
         self.assertEqual(before,list(Template.objects.values()))          # persists nothing
@@ -161,7 +162,7 @@ class Workflows(TestCase):
             client.return_value.__enter__.return_value.post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(no_label)}}]}
             out=mod22_statement(src,'dense adhesions from a prior operation')
         self.assertIn('<strong>Unusual Procedure:</strong>',out['content'])
-        self.assertLess(out['content'].index('Unusual Procedure'),out['content'].index('Indication for Procedure'))
+        self.assertGreater(out['content'].index('Unusual Procedure'),out['content'].index('Indication for Procedure'))
 
     def test_mod22_uses_template_and_selected_reasons(self):
         tpl=self.create('Mod22 RALP',kind='other',epic_name='ASMOD22RALP',content='<p>This procedure was substantially greater than typically required due to: [dense periprostatic adhesions], [prior radiation], [extensive lysis of adhesions].</p>')
