@@ -20,8 +20,9 @@ class Plain(HTMLParser):
 def plain(value):
     parser=Plain(); parser.feed(value)
     return re.sub(r'\n{3,}','\n\n',''.join(parser.parts)).strip()
+TOKEN_RE = re.compile(r'@[^@\s<>]+@|\{[^{}]*\}|\*{3,}')
 def tokens(value):
-    return Counter(re.findall(r'@[^@\s<>]+@|\{[^{}]*\}|\*{3,}',plain(value)))
+    return Counter(TOKEN_RE.findall(plain(value)))
 def warnings(value):
     result=[]
     if tokens(value): result.append('Unresolved Epic tokens/placeholders remain; review in Epic.')
@@ -98,7 +99,7 @@ def _parse_json(raw):
 
 CHECKLIST_CONTRACT = '''You help a surgeon finalise the operative note for one specific completed case before it is copied into the EHR for billing. You do NOT rewrite the note here.
 
-You are given the narrative (source_html) and a numbered list "fill_in_sentences" — each entry is a sentence that contains a *** the surgeon must complete.
+You are given the narrative (source_html) and a numbered list "fill_in_sentences" — each entry is a sentence containing an unresolved Epic placeholder (*** , or a token like @AGE@ , or {…}) the surgeon must resolve before this text is pasted into the chart as plain text (where placeholders do NOT auto-fill).
 
 Return ONLY a JSON object (no prose, no code fences):
 {
@@ -106,10 +107,22 @@ Return ONLY a JSON object (no prose, no code fences):
   "extra_questions": [strings]
 }
 
-"fill_in_questions": exactly one concrete question per entry in fill_in_sentences, in the SAME ORDER and SAME LENGTH. Each asks specifically what belongs in that *** (e.g. which hemostatic agent, which drain and where, the numeric blood loss, the laterality).
-"extra_questions": questions NOT tied to a *** — default statements in the note that may not apply to this case (laterality, nerve-sparing, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, implants/devices) and routinely documented items that look missing.
+"fill_in_questions": exactly one concrete question per entry in fill_in_sentences, in the SAME ORDER and SAME LENGTH. Each asks for the specific value that belongs in that placeholder for this case (e.g. the patient's age, which hemostatic agent, which drain and where, the numeric blood loss, the laterality).
+"extra_questions": questions NOT tied to a placeholder — default statements in the note that may not apply to this case (laterality, nerve-sparing, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, implants/devices) and routinely documented items that look missing.
 
 One concrete thing per question. Never ask the surgeon to supply operative time or billing/modifier justification.'''
+
+GRAMMAR_CONTRACT = '''You are a copy editor for a clinical template. Fix ONLY mechanical errors: spelling, grammar, punctuation, capitalisation, spacing, and obvious typos.
+
+Do NOT:
+- change clinical wording, terminology, phrasing choices, sentence order, or meaning;
+- add or remove any content, sentence, or detail;
+- touch any Epic token or unfamiliar syntax (for example @NAME@, @AGE@, @ASOPNASSISTLINE@, {ASROBOASSIST:165493}, ***, [ ... ]) — reproduce them exactly, including surrounding spacing;
+- change the HTML structure or any heading text.
+
+If a passage has no mechanical error, return it unchanged. Return the COMPLETE text.
+
+Respond with ONLY a JSON object (no prose, no code fences): {"content": "the full corrected HTML", "summary": "one sentence naming the kinds of fixes made, or 'No changes needed.'", "questions": []}.'''
 
 def _chat_json(system,user_obj):
     base=ai_base_url()
@@ -163,34 +176,47 @@ def propose(source,instruction):
     else: raise ValueError('AI disabled. Manual editing remains available.')
     return _finish(source,instruction,result)
 
+def grammar_pass(source):
+    """Mechanical copy-edit only (spelling/grammar/punctuation). Preserves meaning,
+    wording, HTML structure and every Epic token; returns a reviewable proposal."""
+    if settings.AI_PROVIDER=='mock':
+        result={'content':source,'summary':'MOCK provider: no grammar or punctuation check was performed.','questions':['MOCK provider — configure a real AI provider to run the grammar check.']}
+    elif settings.AI_PROVIDER in REMOTE_PROVIDERS:
+        result=_chat_json(GRAMMAR_CONTRACT,{'task':'Copy-edit source_html: correct only spelling, grammar, punctuation, capitalisation and spacing. Change nothing else and keep every Epic token exactly. Return the full corrected HTML.','source_html':source})
+    else:
+        raise ValueError('AI disabled.')
+    return _finish(source,'',result)
+
 def _fill_sentences(source):
-    """The sentence around each *** in the narrative, in document order."""
+    """The sentence around every unresolved Epic placeholder (*** , @TOKEN@ , {...})
+    in the narrative, in document order — each {'context': sentence, 'token': str}."""
     text=plain(source); out=[]
-    for m in re.finditer(r'\*{3,}',text):
+    for m in TOKEN_RE.finditer(text):
         start=max(text.rfind('.',0,m.start())+1,text.rfind('\n',0,m.start())+1)
         ends=[e for e in (text.find('.',m.end()),text.find('\n',m.end())) if e!=-1]
         end=min(ends)+1 if ends else len(text)
-        out.append(re.sub(r'\s+',' ',text[start:end]).strip()[:280])
+        out.append({'context':re.sub(r'\s+',' ',text[start:end]).strip()[:280],'token':m.group(0)})
     return out
 
 def finalize_checklist(source):
     """Ordered checklist: 'review' questions about defaults/omissions first, then one
-    targeted question per *** fill-in in document order. Each item:
-    {'context': sentence or None, 'question': str, 'placeholder': bool}."""
+    targeted question per unresolved Epic placeholder (*** , @TOKEN@ , {...}) in
+    document order. Each item: {'context': sentence or None, 'token': str,
+    'question': str, 'placeholder': bool}."""
     fills=_fill_sentences(source)
     if settings.AI_PROVIDER=='mock':
-        items=[{'context':None,'question':'MOCK provider: no clinical review. Confirm laterality, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, and any implants or hemostatic agents.','placeholder':False}]
-        items+=[{'context':c,'question':'What did you do here?','placeholder':True} for c in fills]
+        items=[{'context':None,'token':'','question':'MOCK provider: no clinical review. Confirm laterality, lymph node dissection extent, drains/tubes, specimens, estimated blood loss, and any implants or hemostatic agents.','placeholder':False}]
+        items+=[{'context':f['context'],'token':f['token'],'question':'What value replaces '+f['token']+' here?','placeholder':True} for f in fills]
         return items
     if settings.AI_PROVIDER not in REMOTE_PROVIDERS: raise ValueError('AI disabled.')
-    result=_chat_json(CHECKLIST_CONTRACT,{'source_html':source,'fill_in_sentences':fills})
+    result=_chat_json(CHECKLIST_CONTRACT,{'source_html':source,'fill_in_sentences':[f['context'] for f in fills]})
     fq=result.get('fill_in_questions') if isinstance(result,dict) else None
     eq=result.get('extra_questions') if isinstance(result,dict) else None
     if not isinstance(fq,list) or not isinstance(eq,list): raise ValueError('Invalid AI response.')
-    items=[{'context':None,'question':str(q)[:2000],'placeholder':False} for q in eq[:20] if isinstance(q,str) and q.strip()]
-    for i,c in enumerate(fills):
-        q=fq[i] if i<len(fq) and isinstance(fq[i],str) and fq[i].strip() else 'What did you do here?'
-        items.append({'context':c,'question':str(q)[:2000],'placeholder':True})
+    items=[{'context':None,'token':'','question':str(q)[:2000],'placeholder':False} for q in eq[:20] if isinstance(q,str) and q.strip()]
+    for i,f in enumerate(fills):
+        q=fq[i] if i<len(fq) and isinstance(fq[i],str) and fq[i].strip() else 'What value replaces '+f['token']+' here?'
+        items.append({'context':f['context'],'token':f['token'],'question':str(q)[:2000],'placeholder':True})
     return items
 
 def finalize_apply(source,answers):

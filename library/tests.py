@@ -108,6 +108,34 @@ class Workflows(TestCase):
         self.assertEqual(self.call('finalize/',{'content':self.a['content'],'answers':[]}).status_code,400)
         self.assertEqual(self.call('finalize/',{'content':self.a['content'],'answers':[{'answer':'  '}]}).status_code,400)
         self.assertEqual(Client().post('/api/finalize/',data='{}',content_type='application/json').status_code,401)
+
+    def test_finalize_surfaces_all_placeholder_types(self):
+        items=self.call('finalize/',{'content':self.a['content'],'step':'questions'}).json()['items']
+        toks={it['token'] for it in items if it['placeholder']}
+        self.assertEqual(toks,{'@AGE@','***','{UNFAMILIAR:987}','@ODD_TOKEN@'})  # not just ***
+
+    def test_grammar_pass_mock_and_endpoint(self):
+        before=list(Template.objects.values())
+        r=self.call('grammar/',{'content':self.a['content']})
+        self.assertEqual(r.status_code,200,r.content)
+        p=r.json()['proposal']
+        self.assertEqual(p['content'],self.a['content'])          # mock leaves text unchanged
+        self.assertEqual(p['source'],self.a['content'])
+        self.assertTrue(p['questions'])                            # mock disclaimer present
+        self.assertEqual(before,list(Template.objects.values()))   # persists nothing
+        self.assertEqual(self.call('grammar/',{'content':''}).status_code,400)
+        self.assertEqual(Client().post('/api/grammar/',data='{}',content_type='application/json').status_code,401)
+
+    @override_settings(AI_PROVIDER='gemini',AI_API_KEY='k',AI_MODEL='gemini-2.5-flash')
+    def test_grammar_pass_keeps_tokens(self):
+        from library.services import grammar_pass
+        src='<p>@AGE@ male,the dissection  was difficult .No complications</p>'
+        fixed={'content':'<p>@AGE@ male, the dissection was difficult. No complications.</p>','summary':'Fixed spacing and punctuation.','questions':[]}
+        with patch('library.services.httpx.Client') as client:
+            client.return_value.__enter__.return_value.post.return_value.json.return_value={'choices':[{'message':{'content':json.dumps(fixed)}}]}
+            out=grammar_pass(src)
+        self.assertIn('@AGE@',out['content'])
+        self.assertEqual(out['token_changes'],False)              # tokens unchanged -> no flag
     def test_backup_roundtrip_and_atomic_failure(self):
         backup=self.client.get('/api/export/').json()
         response=self.call('import/',backup)

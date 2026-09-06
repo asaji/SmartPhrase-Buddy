@@ -112,8 +112,8 @@ def finalize(request,data):
         try:
             return JsonResponse({'items':finalize_checklist(content),'provider':settings.AI_PROVIDER})
         except Exception:
-            # AI checklist failed; still return the *** fill-ins so the surgeon can work manually.
-            fills=[{'context':c,'question':'What did you do here?','placeholder':True} for c in _fill_sentences(content)]
+            # AI checklist failed; still return the raw placeholders so the surgeon can work manually.
+            fills=[{'context':f['context'],'token':f['token'],'question':'What value replaces '+f['token']+' here?','placeholder':True} for f in _fill_sentences(content)]
             return JsonResponse({'items':fills,'provider':settings.AI_PROVIDER,'degraded':True})
     answers=data.get('answers')
     if not isinstance(answers,list) or not 1<=len(answers)<=60: raise ValueError('Provide 1–60 answered items.')
@@ -127,6 +127,18 @@ def finalize(request,data):
         result=finalize_apply(content,norm)
     except Exception:
         return JsonResponse({'error':'AI unavailable or returned an unsafe/invalid response. Your text is unchanged; continue manual editing.'},status=502)
+    return JsonResponse({'proposal':dict(result,source=content),'provider':settings.AI_PROVIDER})
+
+@api(['POST'])
+def grammar(request,data):
+    """Mechanical grammar/punctuation pass over template content before a master save."""
+    from .services import clean, grammar_pass
+    content=clean(data.get('content',''))
+    if not plain(content): raise ValueError('No content to check.')
+    try:
+        result=grammar_pass(content)
+    except Exception:
+        return JsonResponse({'error':'Grammar check unavailable or returned an unsafe response. You can save without it.'},status=502)
     return JsonResponse({'proposal':dict(result,source=content),'provider':settings.AI_PROVIDER})
 
 @api(['POST'])

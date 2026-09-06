@@ -3,7 +3,7 @@ from django.http import JsonResponse
 
 class PrivacyMiddleware:
     def __init__(self,get_response): self.get_response=get_response
-    LIMITS = {'/login/':10,'/api/propose/':20,'/api/finalize/':30,'/api/import/pdf/':12}
+    LIMITS = {'/login/':10,'/api/propose/':20,'/api/finalize/':30,'/api/grammar/':20,'/api/import/pdf/':12}
 
     def __call__(self,request):
         if request.method == 'POST' and request.path in self.LIMITS:
