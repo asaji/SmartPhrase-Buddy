@@ -8,3 +8,5 @@ staticfiles/
 test-results/
 
 node_modules/
+
+CLAUDE.local.md
