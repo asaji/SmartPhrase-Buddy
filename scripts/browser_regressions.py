@@ -15,6 +15,7 @@ with synthetic_server() as base_url:
     operative=template('Checklist regression','operative','<p>Age @AGE@.</p><p>Drain ***.</p>')
     extent=template('Operative choice regression','operative','<p>[[Extent: RALP without pelvic lymphadenectomy | RALP with standard pelvic lymphadenectomy | RALP with extended pelvic lymphadenectomy]]</p><p>Drain ***.</p>')
     removal=template('Removal regression','operative','<p>Keep <strong>this sentence</strong>. Device *** at *** location. Keep <em>this too</em>.</p>')
+    reuse=template('Choice reuse regression','operative','<p>Planned approach: [[Approach: open | robotic | laparoscopic]].</p><p>The [[Approach]] technique was used throughout.</p><p>Specimen removed via the [[Approach]] port site.</p><p>Closure per [[Closure]] preference.</p>')
     formatted=template('Formatted regression','procedure','<p>Value <strong>**</strong>*.</p><p>[[Field: <strong>one</strong> | two]]</p><ul><li>Parent <strong>**</strong>*<ul><li>Child @TOKEN@</li></ul></li></ul>')
     with sync_playwright() as p:
         browser=p.chromium.launch(channel='chrome',headless=True)
@@ -86,6 +87,37 @@ with synthetic_server() as base_url:
         expect(editor).not_to_contain_text('[[')
         expect(editor).not_to_contain_text('***')
         print('PASS: operative [[ … ]] choice fields fill, coexist with the AI checklist, and strip cleanly')
+
+        # A variable declared once ([[Approach: … ]]) and referenced by name ([[Approach]]) elsewhere
+        # is one control that fills every occurrence; a name only ever used bare is free-text + warning.
+        editor=open_template(reuse)
+        expect(page.locator('#case-fields .pfield')).to_have_count(2)
+        expect(page.locator('#case-fields')).to_contain_text('Approach')
+        expect(page.locator('#case-fields')).to_contain_text('3×')  # three occurrences share one control
+        expect(page.locator('input[data-cm="0"]')).to_have_count(3)  # the declared option list
+        expect(page.locator('input[data-cm="1"]')).to_have_count(0)  # Closure: undeclared, free text only
+        expect(page.locator('#case-fields .pfield').nth(1)).to_contain_text('No options declared')
+        check_case_field(0,'robotic');page.locator('#case-generate').click()
+        expect(editor).to_contain_text('Planned approach: robotic.')
+        expect(editor).to_contain_text('The robotic technique was used throughout.')
+        expect(editor).to_contain_text('Specimen removed via the robotic port site.')
+        expect(editor).not_to_contain_text('[[Approach')
+        expect(editor).to_contain_text('[[Closure]]')  # left untouched until its free text is given
+        page.locator('input[data-cmfree="1"]').fill('running barbed suture')
+        page.locator('#case-generate').click()
+        expect(editor).to_contain_text('Closure per running barbed suture preference.')
+        expect(editor).not_to_contain_text('[[Closure')
+        # Switching the shared pick re-fills every occurrence from the original template.
+        check_case_field(0,'robotic',False);check_case_field(0,'open')
+        page.locator('#case-generate').click()
+        expect(editor).to_contain_text('Planned approach: open.')
+        expect(editor).to_contain_text('Specimen removed via the open port site.')
+        expect(editor).not_to_contain_text('robotic')
+        editor=open_template(reuse,master=True)
+        expect(page.locator('#fixed-warning')).to_contain_text('Closure')
+        expect(page.locator('#fixed-warning')).to_contain_text('never declared with options')
+        expect(page.locator('#fixed-warning')).not_to_contain_text('“Approach”')
+        print('PASS: declare-once choice variables fill every reference from one control; undeclared ones warn')
 
         editor=open_template(operative)
         page.locator('#checklist').click()
