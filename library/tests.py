@@ -347,10 +347,29 @@ class PdfImport(TestCase):
         from .pdfimport import text_to_html
         self.assertEqual(text_to_html('- a\n- b'),'<ul><li>a</li><li>b</li></ul>')
         html=text_to_html('Indication for Procedure:\nLine two\n\nNext para <script>alert(1)</script>')
-        # One <p> per line so the Epic-header split lands on a real node boundary.
+        # "Label:" lines stay their own <p> so the Epic-header split lands on a real boundary.
         self.assertIn('<p>Indication for Procedure:</p>',html)
         self.assertIn('<p>Line two</p>',html)
         self.assertIn('&lt;script&gt;',html); self.assertNotIn('<script>',html)
+
+    def test_text_to_html_reflows_epic_hard_wrap(self):
+        from .pdfimport import text_to_html
+        # Epic hard-wraps one prose paragraph across several lines mid-sentence.
+        wrapped=('The patient was brought to the operating room where a timeout was performed. Ancef was given for\n'
+                 'antibiotic\n'
+                 'prophylaxis. The patient was then prepped and draped in the usual sterile fashion.')
+        self.assertEqual(
+            text_to_html(wrapped),
+            '<p>The patient was brought to the operating room where a timeout was performed. '
+            'Ancef was given for antibiotic prophylaxis. The patient was then prepped and '
+            'draped in the usual sterile fashion.</p>')
+        # Label lines, numbered lines and blank-line breaks are preserved, not merged.
+        html=text_to_html('Surgeon: A B, MD\nAssistant(s): C D PA-C\n\nSpecimens:\n1. Renal mass\n2. ***')
+        self.assertIn('<p>Surgeon: A B, MD</p>',html)
+        self.assertIn('<p>Assistant(s): C D PA-C</p>',html)
+        self.assertIn('<p>Specimens:</p>',html)
+        self.assertIn('<li>Renal mass</li>',html)
+        self.assertNotIn('Surgeon: A B, MD Assistant',html)
 
     def upload(self,lines=None):
         return self.client.post('/api/import/pdf/',{'file':__import__('io').BytesIO(tiny_pdf(lines or self.LINES))})

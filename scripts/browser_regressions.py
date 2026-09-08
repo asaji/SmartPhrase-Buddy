@@ -244,6 +244,27 @@ with synthetic_server() as base_url:
         expect(page.locator('#notice')).to_contain_text('revision 3')
         operative.refresh_from_db();assert operative.version==3 and 'scarring' in operative.content
         print('PASS: master editor AI-improve stages a reviewed diff into the editor; save persists it')
+
+        # Master editor "Reflow wrapped lines" — merges <p> fragments split at Epic's PDF
+        # hard word-wrap back into flowing paragraphs; label lines and blank-line breaks stay.
+        reflow=template('Reflow regression','operative',
+            '<p><strong>Surgeon</strong>: A B, MD</p>'
+            '<p>The dissection was carried down to the fascia which was then incised sharply along the length of the</p>'
+            '<p>incision. The muscle was split and the peritoneum was swept medially.</p>'
+            '<p></p>'
+            '<p><strong>Anesthesia</strong>: General</p>')
+        editor=open_template(reflow,master=True)
+        html_before=page.evaluate("document.querySelector('#content .tiptap').innerHTML")
+        assert html_before.count('<p>')>=4,html_before
+        page.locator('#reflow').click()  # confirm() auto-accepted
+        html_after=page.evaluate("document.querySelector('#content .tiptap').innerHTML")
+        assert 'along the length of the incision. The muscle was split' in html_after,html_after
+        assert html_after.count('<p>')<html_before.count('<p>'),html_after  # prose fragments merged
+        assert 'Surgeon</strong>: A B, MD</p>' in html_after,html_after     # label line untouched
+        assert 'Anesthesia</strong>: General</p>' in html_after,html_after
+        reflow.refresh_from_db();assert reflow.version==1  # editor only, not saved
+        print('PASS: master editor reflow merges Epic hard-wrapped paragraphs, keeps label lines')
+
         assert not errors,errors
         assert page.evaluate('localStorage.length + sessionStorage.length')==0
         browser.close()

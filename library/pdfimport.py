@@ -27,6 +27,11 @@ DISCLAIMER_RE = re.compile(
     re.I,
 )
 BULLET_RE = re.compile(r'^\s*(?:[-*•·▪]|\d+[.)])\s+')
+# A "Label:" line Epic prints for header fields (Surgeon:, Preoperative Diagnosis:, …) —
+# kept as its own paragraph so wrapped prose never merges into it and the header split
+# lands on a real node boundary.
+LABEL_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9 /()'’.\-]{0,40}:(\s|$)")
+_PARA_END = ('.', '!', '?', ':', ';', ')', ']')
 
 
 def extract_text(data: bytes) -> str:
@@ -89,31 +94,57 @@ def _collapse(text: str) -> str:
 def text_to_html(text: str) -> str:
     """Conservative plain-text -> HTML.
 
-    Each non-blank line becomes its own paragraph (Epic prints one logical line
-    per line, and one <p> per line lets the reviewer split the Epic header at a
-    real node boundary). Consecutive bullet lines collapse into a list. No
-    headings or emphasis are inferred; the reviewer formats in the editor.
+    Epic prints one logical line per line for header fields and lists, but
+    hard-wraps body prose at a fixed column. "Label:" lines, bullet lines and
+    numbered lines each stay their own block (so the Epic-header split lands on a
+    real node boundary); consecutive wrapped prose lines are reflowed into one
+    <p>, joined by a space, so the paragraph flows when pasted into Epic. A blank
+    line always ends a paragraph. A prose line is joined to the paragraph in
+    progress only when that paragraph looks wrap-truncated — it does not end in
+    sentence/label punctuation, or it is already >=95 characters. No headings or
+    emphasis are inferred; the reviewer formats in the editor.
     """
     out = []
     bucket = []
+    para = []
 
-    def flush():
+    def flush_list():
         if bucket:
             out.append('<ul>' + ''.join(
                 '<li>' + _html.escape(BULLET_RE.sub('', r)) + '</li>' for r in bucket
             ) + '</ul>')
             bucket.clear()
 
+    def flush_para():
+        if para:
+            out.append('<p>' + _html.escape(' '.join(para)) + '</p>')
+            para.clear()
+
     for line in text.strip().splitlines():
         if not line.strip():
-            flush()
+            flush_list()
+            flush_para()
             continue
         if BULLET_RE.match(line):
+            flush_para()
             bucket.append(line)
-        else:
-            flush()
-            out.append('<p>' + _html.escape(line) + '</p>')
-    flush()
+            continue
+        flush_list()
+        stripped = line.strip()
+        if para and not LABEL_LINE.match(stripped):
+            joined = ' '.join(para)
+            ends = joined.endswith(_PARA_END)
+            if LABEL_LINE.match(para[0]):
+                trunc = not ends and len(joined) >= 88  # a label line whose value itself wrapped
+            else:
+                trunc = not ends or len(joined) >= 95
+            if trunc:
+                para.append(stripped)
+                continue
+        flush_para()
+        para.append(stripped)
+    flush_list()
+    flush_para()
     return ''.join(out) or '<p></p>'
 
 
