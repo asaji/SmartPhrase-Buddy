@@ -293,6 +293,19 @@ def import_resolve(request,data,pk):
     return JsonResponse({'ok':True,'counts':pending_counts(request.user)})
 
 @api(['POST'])
+def imports_resolve_all(request,data):
+    """Bulk skip / restore every not-yet-imported queue row for this user."""
+    rows=PendingImport.objects.filter(owner=request.user,imported_at__isnull=True)
+    action=data.get('action')
+    if action=='dismiss':
+        updated=rows.filter(dismissed=False).update(dismissed=True)
+    elif action=='restore':
+        updated=rows.filter(dismissed=True).update(dismissed=False)
+    else:
+        raise ValueError('Unknown action.')
+    return JsonResponse({'updated':updated,'counts':pending_counts(request.user)})
+
+@api(['POST'])
 def imports_clear(request,data):
     scope=data.get('scope','resolved')
     rows=PendingImport.objects.filter(owner=request.user)

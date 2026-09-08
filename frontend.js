@@ -77,20 +77,29 @@ async function master(t=null,seg=null){const fresh=!t;page(`<div class="intro"><
  });
  if(t){$('#history').innerHTML=t.revisions.map(r=>`<details><summary>Revision ${r.version} · ${new Date(r.created_at).toLocaleString()}</summary><div class="document">${safe(r.snapshot.content)}</div><button data-restore="${r.version}">Restore as new revision</button></details>`).join('');document.querySelectorAll('[data-restore]').forEach(b=>b.onclick=async()=>{try{if(!confirm('Restore this revision? Unsaved edits will be discarded.'))return;await api(`templates/${t.id}/restore/`,'POST',{version:t.version,restore_version:+b.dataset.restore});dirty=false;await master(await api(`templates/${t.id}/`));notify('Revision restored as a new revision.');}catch(e){notify(e.message);}});action('#delete',async()=>{if(confirm('Permanently delete this master and all its revisions? Export a backup first if needed.')){await api(`templates/${t.id}/`,'DELETE');selected.delete(t.id);await library();}});}
 }
-async function imports(){activeDraft=false;dirty=false;current=null;let showSkipped=false;
- page(`<div class="intro"><div><div class="eyebrow">FROM YOUR EPIC PDF EXPORT</div><h1>Import queue</h1><p>Pick a phrase to review and add to your library. Skip the ones you don't need.</p></div><button id="back">Back to library</button></div><section class="panel"><div id="q-summary" class="muted"></div><div class="actions"><label class="filelabel">Upload a PDF export<input type="file" id="pdf" accept="application/pdf,.pdf" aria-label="Epic SmartPhrase PDF export"></label><button type="button" id="toggle-skipped" hidden></button><button type="button" id="clear-resolved" hidden>Clear imported &amp; skipped</button></div><p class="hint">The PDF is parsed in your browser session and not stored. Extracted phrase text stays in your private queue until you import or clear it. Re-uploading the same PDF adds nothing.</p><div id="q-list"></div></section>`);
+async function imports(){activeDraft=false;dirty=false;current=null;let showSkipped=false,counts={};
+ page(`<div class="intro"><div><div class="eyebrow">FROM YOUR EPIC PDF EXPORT</div><h1>Import queue</h1><p>Pick a phrase to review and add to your library. Skip the ones you don't need.</p></div><button id="back">Back to library</button></div><section class="panel"><div id="q-summary" class="muted"></div><div class="actions"><label class="filelabel">Upload a PDF export<input type="file" id="pdf" accept="application/pdf,.pdf" aria-label="Epic SmartPhrase PDF export"></label><button type="button" id="toggle-skipped" hidden></button><button type="button" id="skip-all" hidden></button><button type="button" id="clear-resolved" hidden>Clear imported &amp; skipped</button></div><p class="hint">The PDF is parsed in your browser session and not stored. Extracted phrase text stays in your private queue until you import or clear it. Re-uploading the same PDF adds nothing.</p><div id="q-list"></div></section>`);
  action('#back',()=>{if(leave())return library();});
- function render(data){const items=data.items,c=data.counts;
+ function render(data){const items=data.items,c=data.counts;counts=c;
   $('#q-summary').textContent=(c.pending||c.imported||c.dismissed)?`${c.pending} awaiting review · ${c.imported} imported · ${c.dismissed} skipped${showSkipped?' — showing skipped':''}`:'Your import queue is empty. Upload an Epic “print SmartPhrases” PDF to fill it.';
   $('#q-list').innerHTML=items.map(s=>`<div class="qrow"><button class="qopen" data-open="${s.id}"><strong>${esc(s.name||'(unnamed phrase)')}</strong><small>${s.chars} chars${s.source_name?' · '+esc(s.source_name):''}${s.flags&&s.flags.length?' · '+s.flags.length+' flag'+(s.flags.length>1?'s':''):''}</small></button><div class="qact">${showSkipped?`<button data-restore="${s.id}">Restore</button>`:`<button data-skip="${s.id}">Skip</button>`}</div></div>`).join('')||`<div class="empty">${showSkipped?'Nothing skipped.':'Queue is clear — nothing left to import.'}</div>`;
   $('#q-list').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{const s=items.find(x=>x.id==b.dataset.open);master(null,s).catch(e=>notify(e.message));});
   $('#q-list').querySelectorAll('[data-skip]').forEach(b=>b.onclick=()=>resolve(b.dataset.skip,'dismiss'));
   $('#q-list').querySelectorAll('[data-restore]').forEach(b=>b.onclick=()=>resolve(b.dataset.restore,'restore'));
   const tg=$('#toggle-skipped');tg.hidden=!(c.dismissed||showSkipped);tg.textContent=showSkipped?'Hide skipped':`Show skipped (${c.dismissed})`;
+  const sa=$('#skip-all');
+  if(showSkipped){sa.hidden=!c.dismissed;sa.textContent=`Restore all (${c.dismissed})`;}
+  else{sa.hidden=!c.pending;sa.textContent=`Skip all (${c.pending})`;}
   $('#clear-resolved').hidden=!(c.imported||c.dismissed);}
  async function reload(){try{render(await api('imports/'+(showSkipped?'?dismissed=1':'')));}catch(e){notify(e.message);}}
  async function resolve(id,act){try{await api('imports/'+id+'/resolve/','POST',{action:act});await reload();}catch(e){notify(e.message);}}
  action('#toggle-skipped',async()=>{showSkipped=!showSkipped;await reload();});
+ action('#skip-all',async()=>{const restoring=showSkipped,n=restoring?counts.dismissed:counts.pending;
+  if(!n)return;
+  if(!confirm(restoring?`Restore all ${n} skipped phrase${n>1?'s':''} back to the review list?`:`Skip all ${n} phrase${n>1?'s':''} awaiting review? They move to the skipped list and can be restored.`))return;
+  const r=await api('imports/resolve-all/','POST',{action:restoring?'restore':'dismiss'});
+  if(restoring)showSkipped=false;
+  notify((restoring?'Restored ':'Skipped ')+r.updated+' phrase'+(r.updated===1?'':'s')+'.');await reload();});
  action('#clear-resolved',async()=>{if(!confirm('Delete all imported and skipped queue entries? Templates you already saved are not affected.'))return;const r=await api('imports/clear/','POST',{scope:'resolved'});notify('Removed '+r.deleted+' queue entries.');showSkipped=false;await reload();});
  $('#pdf').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;$('#q-list').textContent='Extracting…';try{
   if(file.size>25*1024*1024)throw Error('PDF exceeds the 25 MB import limit.');

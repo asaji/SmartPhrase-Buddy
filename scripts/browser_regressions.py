@@ -230,6 +230,23 @@ with synthetic_server() as base_url:
         expect(page.locator('.qopen')).to_have_count(0)
         print('PASS: current grammar proposals and atomic queued import through the UI')
 
+        # "Skip all" dismisses every pending row at once; "Restore all" brings them back.
+        for i in range(3):
+            PendingImport.objects.create(owner=user,batch='bulk',name=f'Bulk {i}',text=f'Bulk source {i}.',html=f'<p>Bulk source {i}.</p>',text_hash=f'bulk-{i}',order=i)
+        page.locator('#imports-nav').click()
+        expect(page.locator('.qopen')).to_have_count(3)
+        page.locator('#skip-all').click()  # confirm() auto-accepted
+        expect(page.locator('#notice')).to_contain_text('Skipped 3 phrases')
+        expect(page.locator('.qopen')).to_have_count(0)
+        assert PendingImport.objects.filter(owner=user,batch='bulk',dismissed=True).count()==3
+        page.locator('#toggle-skipped').click()
+        expect(page.locator('.qopen')).to_have_count(3)
+        page.locator('#skip-all').click()  # now labelled "Restore all"
+        expect(page.locator('#notice')).to_contain_text('Restored 3 phrases')
+        assert PendingImport.objects.filter(owner=user,batch='bulk',dismissed=False,imported_at__isnull=True).count()==3
+        expect(page.locator('.qopen')).to_have_count(3)
+        print('PASS: import queue Skip all / Restore all bulk actions')
+
         # Master editor "ask AI to improve this note" — proposes a reviewed diff into the editor
         # only; nothing is persisted until the surgeon confirms and saves a new revision.
         editor=open_template(operative,master=True)

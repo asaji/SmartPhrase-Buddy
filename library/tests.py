@@ -413,6 +413,23 @@ class PdfImport(TestCase):
         self.assertEqual(cleared['deleted'],1)
         self.assertEqual(PendingImport.objects.filter(owner=self.user).count(),3)
 
+    def test_resolve_all_skips_and_restores_in_bulk(self):
+        self.upload()
+        listed=self.client.get('/api/imports/').json()['items']
+        self.assertEqual(len(listed),4)
+        # One already imported must be left alone by a bulk skip.
+        imp=listed[0]
+        self.client.post('/api/imports/%d/resolve/'%imp['id'],data=json.dumps({'action':'imported','template_id':self.b['id']}),content_type='application/json')
+        r=self.client.post('/api/imports/resolve-all/',data=json.dumps({'action':'dismiss'}),content_type='application/json').json()
+        self.assertEqual(r['updated'],3)
+        self.assertEqual((r['counts']['pending'],r['counts']['imported'],r['counts']['dismissed']),(0,1,3))
+        self.assertEqual(len(self.client.get('/api/imports/').json()['items']),0)
+        self.assertEqual(len(self.client.get('/api/imports/?dismissed=1').json()['items']),3)
+        back=self.client.post('/api/imports/resolve-all/',data=json.dumps({'action':'restore'}),content_type='application/json').json()
+        self.assertEqual(back['updated'],3)
+        self.assertEqual((back['counts']['pending'],back['counts']['imported']),(3,1))
+        self.assertEqual(self.client.post('/api/imports/resolve-all/',data=json.dumps({'action':'nope'}),content_type='application/json').status_code,400)
+
     def test_queue_is_owner_scoped(self):
         self.upload()
         self.client.force_login(get_user_model().objects.create_user('intruder'))
