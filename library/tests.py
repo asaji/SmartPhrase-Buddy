@@ -1,9 +1,11 @@
 import json
+from datetime import timedelta
 from unittest.mock import patch
 from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from .models import Template, Revision, PendingImport
+from django.utils import timezone
+from .models import Template, Revision, PendingImport, CaseDraft
 from .services import tokens, clean, propose
 
 class Workflows(TestCase):
@@ -493,3 +495,75 @@ class PdfImport(TestCase):
         guest=Client()
         self.assertEqual(guest.post('/api/import/pdf/',{}).status_code,401)
         self.assertEqual(guest.get('/api/imports/').status_code,401)
+
+
+class CaseDrafts(TestCase):
+    """Opt-in resumable case drafts: one per master template, 7-day expiry, export-excluded."""
+    def setUp(self):
+        cache.clear()
+        self.user=get_user_model().objects.create_user('owner',password='synthetic-test-password')
+        self.client.force_login(self.user)
+        self.op=self.mk('Operative',kind='operative',content='<h2>Operative</h2><p>@AGE@ *** dissection.</p>')
+        self.clinic=self.mk('Counseling',kind='clinic',content='<p>discussion</p>')
+    def mk(self,title,**kw):
+        r=self.client.post('/api/templates/',data=json.dumps({'title':title,'content':'<p>x</p>',**kw}),content_type='application/json')
+        self.assertEqual(r.status_code,201,r.content)
+        return r.json()
+    def save(self,body):
+        return self.client.post('/api/drafts/',data=json.dumps(body),content_type='application/json')
+
+    def test_save_resume_overwrite_list_delete(self):
+        r=self.save({'template_id':self.op['id'],'content':'<p>work in progress one</p>','label':'left off at nodes'})
+        self.assertEqual(r.status_code,200,r.content)
+        d=r.json()
+        self.assertEqual(d['content'],'<p>work in progress one</p>')
+        self.assertEqual((d['label'],d['base_version'],d['stale_base']),('left off at nodes',1,False))
+        # one row per template — a repeat save overwrites in place
+        r2=self.save({'template_id':self.op['id'],'content':'<p>work in progress two</p>'})
+        self.assertEqual(CaseDraft.objects.filter(owner=self.user).count(),1)
+        self.assertEqual(r2.json()['id'],d['id'])
+        self.assertEqual(r2.json()['content'],'<p>work in progress two</p>')
+        # surfaced on the template detail response, fetchable in full, listable, deletable
+        self.assertEqual(self.client.get(f"/api/templates/{self.op['id']}/").json()['case_draft']['id'],d['id'])
+        self.assertEqual(self.client.get(f"/api/drafts/{d['id']}/").json()['content'],'<p>work in progress two</p>')
+        self.assertEqual(len(self.client.get('/api/drafts/').json()['items']),1)
+        self.assertEqual(self.client.delete(f"/api/drafts/{d['id']}/").status_code,200)
+        self.assertEqual(CaseDraft.objects.count(),0)
+        self.assertIsNone(self.client.get(f"/api/templates/{self.op['id']}/").json()['case_draft'])
+
+    def test_only_operative_and_procedure_kinds(self):
+        self.assertEqual(self.save({'template_id':self.clinic['id'],'content':'<p>x</p>'}).status_code,400)
+        self.assertEqual(self.save({'template_id':999999,'content':'<p>x</p>'}).status_code,404)
+        self.assertEqual(CaseDraft.objects.count(),0)
+
+    def test_content_sanitized_and_required(self):
+        r=self.save({'template_id':self.op['id'],'content':'<p onclick="x()">hi</p><script>bad()</script>'})
+        self.assertEqual(r.status_code,200,r.content)
+        self.assertNotIn('script',r.json()['content'])
+        self.assertNotIn('onclick',r.json()['content'])
+        self.assertEqual(self.save({'template_id':self.op['id'],'content':'   '}).status_code,400)
+
+    def test_stale_base_flag_when_master_advances(self):
+        self.save({'template_id':self.op['id'],'content':'<p>draft</p>'})
+        put=self.client.put(f"/api/templates/{self.op['id']}/",data=json.dumps(dict(self.op,content='<p>new master body</p>',version=1)),content_type='application/json')
+        self.assertEqual(put.status_code,200,put.content)
+        self.assertTrue(self.client.get(f"/api/templates/{self.op['id']}/").json()['case_draft']['stale_base'])
+
+    def test_expired_drafts_are_pruned_on_access(self):
+        self.save({'template_id':self.op['id'],'content':'<p>old</p>'})
+        CaseDraft.objects.update(updated_at=timezone.now()-CaseDraft.TTL-timedelta(minutes=1))
+        self.assertEqual(self.client.get('/api/drafts/').json()['items'],[])
+        self.assertEqual(CaseDraft.objects.count(),0)
+
+    def test_owner_scoped_and_auth_required(self):
+        self.save({'template_id':self.op['id'],'content':'<p>mine</p>'})
+        d=CaseDraft.objects.get()
+        other=Client(); other.force_login(get_user_model().objects.create_user('other',password='pw'))
+        self.assertEqual(other.get(f'/api/drafts/{d.pk}/').status_code,404)
+        self.assertEqual(other.delete(f'/api/drafts/{d.pk}/').status_code,404)
+        self.assertEqual(other.get('/api/drafts/').json()['items'],[])
+        self.assertEqual(Client().get('/api/drafts/').status_code,401)
+
+    def test_portable_export_excludes_case_drafts(self):
+        self.save({'template_id':self.op['id'],'content':'<p>secret working draft text</p>'})
+        self.assertNotIn('secret working draft text',self.client.get('/api/export/').content.decode())

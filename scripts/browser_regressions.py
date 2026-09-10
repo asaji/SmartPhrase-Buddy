@@ -4,7 +4,7 @@ from playwright.sync_api import sync_playwright, expect
 
 with synthetic_server() as base_url:
     from django.contrib.auth import get_user_model
-    from library.models import Template, Revision, PendingImport
+    from library.models import Template, Revision, PendingImport, CaseDraft
     from library.services import snapshot
     user=get_user_model().objects.create_user('regression',password='synthetic-test-password')
     def template(title,kind,content):
@@ -281,6 +281,35 @@ with synthetic_server() as base_url:
         assert 'Anesthesia</strong>: General</p>' in html_after,html_after
         reflow.refresh_from_db();assert reflow.version==1  # editor only, not saved
         print('PASS: master editor reflow merges Epic hard-wrapped paragraphs, keeps label lines')
+
+        # Opt-in "Save to my account" — one resumable server copy per template.
+        # Resume from the library preview restores the exact working narrative in a
+        # freshly mounted editor (the cross-device path); Finish and clear can delete it.
+        operative.refresh_from_db()
+        editor=open_template(operative)
+        editor.fill('Case in progress: nodes done, closing next. @AGE@ ***.')
+        page.locator('#case-save-label').fill('left off at closure')
+        page.locator('#case-save-account').click()
+        expect(page.locator('#notice')).to_contain_text('Saved to your account')
+        draft=CaseDraft.objects.get(owner=user,template=operative)
+        assert (draft.kind,draft.base_version,draft.label)==('operative',operative.version,'left off at closure'),draft.__dict__
+        assert 'nodes done, closing next' in draft.content,draft.content
+        editor.fill('Case in progress: everything done, ready to copy.')
+        page.locator('#case-save-account').click()
+        expect(page.locator('#notice')).to_contain_text('Saved to your account')
+        assert CaseDraft.objects.filter(owner=user,template=operative).count()==1  # overwritten in place
+        page.locator('#library-nav').click()
+        page.locator(f'[data-open="{operative.pk}"]').click()
+        expect(page.locator('#case-resume')).to_be_visible()
+        page.locator('#case-resume').click()
+        resumed=page.locator('#case-content .tiptap')
+        expect(resumed).to_be_visible()
+        expect(resumed).to_contain_text('everything done, ready to copy')
+        expect(page.locator('.intro')).to_contain_text('Resumed from the copy you saved')
+        page.locator('#finish').click()  # confirm() + "also delete" both auto-accepted
+        expect(page.locator('#library-nav')).to_be_visible()
+        assert CaseDraft.objects.filter(owner=user,template=operative).count()==0
+        print('PASS: save case draft to account, resume from library preview, delete on finish')
 
         assert not errors,errors
         assert page.evaluate('localStorage.length + sessionStorage.length')==0

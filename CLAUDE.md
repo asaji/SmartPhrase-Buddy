@@ -17,8 +17,14 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   `collectstatic` → restart `spb` only when Python/settings/templates changed
   (`sudo` there needs a password — hand the restart to the user). charon runs
   Python 3.10; keep syntax compatible.
-- No case text, drafts, or AI output is ever persisted (DB, browser storage,
-  logs). Keep it that way — see the privacy boundary in `README.md`.
+- No case text, drafts, or AI output is persisted **except** the one opt-in
+  resumable copy per operative/procedure master that the surgeon explicitly
+  saves via **Save to my account** (`CaseDraft`): owner-scoped, current working
+  narrative only (never AI output, instructions, or the session draft-history
+  checkpoints), one row per template that an explicit save overwrites, auto-
+  deleted after `CaseDraft.TTL` (7 days), and excluded from the portable JSON
+  export/backup. Nothing else — no autosave, no browser storage, no case
+  logging. Keep it that way — see the privacy boundary in `README.md`.
 
 ## Roadmap — future features
 
@@ -47,8 +53,10 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
 - [ ] **Library-item evidence workflow.** `library` kind still just uses the
   master editor. Build: paste-your-own citations by default; opt-in
   AI-suggested citations, every one flagged *UNVERIFIED*.
-- [ ] **Saved case histories** — currently every case draft is ephemeral by
-  design; add an opt-in, clearly-scoped way to keep finished cases.
+- [x] **Resumable case drafts** — **Save to my account** keeps one opt-in
+  working copy per operative/procedure master (`CaseDraft`, 7-day expiry) so a
+  case can be finished on another computer. Still open: keeping *finished*
+  cases, and more than one saved variant per template.
 - [ ] **Reusable case-variation saving** — save a filled-in set of `[[ … ]]` /
   checklist answers as a named variant of a master.
 - [ ] **Shared-section propagation** — edit a shared block once and propagate to

@@ -10,7 +10,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
 from django.db.models import Q
 from django.utils import timezone
-from .models import Template, Revision, PendingImport
+from .models import Template, Revision, PendingImport, CaseDraft
 from .services import normalize,serialize,snapshot,plain,propose,tokens,warnings
 
 @login_required
@@ -28,7 +28,7 @@ def api(methods):
                 data=json.loads(request.body) if request.body else {}
                 if not isinstance(data,dict): raise ValueError('Expected JSON object.')
                 return fn(request,data,*args,**kwargs)
-            except (Template.DoesNotExist,PendingImport.DoesNotExist): return JsonResponse({'error':'Not found.'},status=404)
+            except (Template.DoesNotExist,PendingImport.DoesNotExist,CaseDraft.DoesNotExist): return JsonResponse({'error':'Not found.'},status=404)
             except (ValueError,TypeError,KeyError,signing.BadSignature) as e: return JsonResponse({'error':str(e) if isinstance(e,ValueError) else 'Invalid request or expired review.'},status=400)
         return wrapped
     return deco
@@ -79,7 +79,7 @@ def detail(request,data,pk):
     if request.method=='DELETE': t.delete(); return JsonResponse({'ok':True})
     if request.method=='PUT':
         with transaction.atomic(): replace(t,dict(data,original_source=t.original_source),data.get('version'))
-    return JsonResponse(dict(serialize(t),revisions=list(t.revisions.order_by('-version').values('version','snapshot','created_at')),warnings=warnings(t.content)))
+    return JsonResponse(dict(serialize(t),revisions=list(t.revisions.order_by('-version').values('version','snapshot','created_at')),warnings=warnings(t.content),case_draft=case_draft_summary(request.user,t)))
 
 @api(['POST'])
 def restore(request,data,pk):
@@ -219,6 +219,47 @@ def import_data(request,data):
                 r=Revision.objects.create(template=t,version=rev['version'],snapshot=normalize(rev['snapshot']))
                 Revision.objects.filter(pk=r.pk).update(created_at=date(rev['created_at']))
     return JsonResponse({'imported':len(data['items'])})
+
+def draft_row(d):
+    return {'id':d.pk,'template_id':d.template_id,'template_title':d.template.title,'kind':d.kind,
+            'label':d.label,'base_version':d.base_version,'stale_base':d.stale_base,'updated_at':d.updated_at.isoformat()}
+
+def draft_full(d):
+    return dict(draft_row(d),content=d.content,template_version=d.template.version)
+
+def case_draft_summary(user,t):
+    """Compact resume marker for the template detail response, or None. Prunes expired rows first."""
+    CaseDraft.prune(user)
+    d=CaseDraft.objects.filter(owner=user,template=t).first()
+    return draft_row(d) if d else None
+
+@api(['GET','POST'])
+def drafts(request,data):
+    """Opt-in resumable case drafts. One row per master template; an explicit save overwrites it."""
+    CaseDraft.prune(request.user)
+    if request.method=='POST':
+        from .services import clean
+        tid=data.get('template_id')
+        if type(tid) is not int or tid<1: raise ValueError('A template is required.')
+        t=own(request,tid)
+        if t.kind not in ('operative','procedure'): raise ValueError('Only operative and procedure cases can be saved.')
+        content=clean(data.get('content',''))
+        if not plain(content): raise ValueError('There is nothing to save yet.')
+        label=str(data.get('label','')).strip()[:200]
+        d,_=CaseDraft.objects.update_or_create(owner=request.user,template=t,
+            defaults={'kind':t.kind,'base_version':t.version,'content':content,'label':label})
+        d.template=t  # avoid a refetch for stale_base/title
+        return JsonResponse(draft_full(d))
+    rows=CaseDraft.objects.filter(owner=request.user).select_related('template')
+    return JsonResponse({'items':[draft_row(d) for d in rows]})
+
+@api(['GET','DELETE'])
+def draft_item(request,data,pk):
+    CaseDraft.prune(request.user)
+    d=CaseDraft.objects.select_related('template').get(pk=pk,owner=request.user)
+    if request.method=='DELETE':
+        d.delete(); return JsonResponse({'ok':True})
+    return JsonResponse(draft_full(d))
 
 @api(['GET'])
 def status(request,data):
