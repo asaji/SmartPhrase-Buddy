@@ -78,7 +78,19 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   laterality/device detail, conflicting complication assertions, difficult
   dissection without a time figure, unfamiliar tokens, intentional optional-
   passage removal, and malformed/timeout responses, all on synthetic content.
-- [ ] **End-to-end Epic paste verification** — the manual checklist in
-  `README.md` exists but has not been run through a real Epic environment.
+- [x] **End-to-end Epic paste verification (partial)** — real hospital testing
+  (2026-09-10) confirmed Epic's Op Note free-text field strips *all* inbound
+  clipboard formatting on paste, even from `text/html` written by **Copy
+  formatted** — bold and CSS/paragraph spacing both vanish; only `text/plain`
+  content actually survives. Fixed in response: `text()` in `frontend.js` now
+  inserts a blank line after every block element (`p`/`div`/`h1-4`/
+  `blockquote`/`ul`/`ol`), not just where an author happened to leave an empty
+  paragraph, so section spacing survives a plain-text-only paste; **Copy plain
+  text** is now the primary/emphasized button (formatted copy still has no
+  confirmed destination where it helps). Bold itself has no plain-text
+  equivalent and is not being faked with a marker — remains unresolved by
+  design. Still open: verification of token/SmartList activation on paste,
+  and testing in any other Epic field types (SmartPhrase editor, other note
+  sections) that might behave differently.
 - [ ] **Multi-worker deployment** needs a shared login/AI rate limiter; the
   current in-process limiter only covers one Gunicorn worker.

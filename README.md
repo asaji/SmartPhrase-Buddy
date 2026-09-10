@@ -194,7 +194,7 @@ Information needed at deployment: domain/DNS control, approved host, TLS termina
 
 Use synthetic material in your own Epic environment:
 
-1. Copy plain and formatted paragraphs, headings, nested bullets and numbered lists; paste into the intended note field and compare line breaks/formatting.
+1. Copy plain and formatted paragraphs, headings, nested bullets and numbered lists; paste into the intended note field and compare line breaks/formatting. **Confirmed in real hospital testing:** an Epic Op Note free-text field discarded *all* formatting from **Copy formatted** — bold and paragraph spacing both were lost, identical to **Copy plain text**. Treat plain text as the only reliable channel until your own field is verified otherwise; the app's plain-text export now inserts a blank line between every paragraph/heading/list so section breaks still read clearly with no formatting at all. Bold has no plain-text equivalent and is not simulated with a marker character (it would collide with the `***` placeholder convention).
 2. Check literal @NAME@, @MRN@, @AGE@, @TD@, @ASOPNASSISTLINE@, {ASROBOASSIST:165493}, ***, duplicates and unfamiliar tokens. Determine whether they remain literal or activate; activation is unverified.
 3. Confirm case output begins at the selected narrative boundary, excludes header and review commentary, and matches the text you approved.
 4. Complete the Epic header separately; review the entire assembled note including unresolved defaults, contradictions and placeholders.
