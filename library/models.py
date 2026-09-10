@@ -1,5 +1,6 @@
 from datetime import timedelta
 from django.db import models
+from django.db.models.functions import Lower
 from django.conf import settings
 from django.utils import timezone
 
@@ -25,6 +26,22 @@ class Revision(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     class Meta:
         constraints = [models.UniqueConstraint(fields=['template','version'],name='unique_revision')]
+
+class SharedChoice(models.Model):
+    """An account-level named option list, referenced from any template as [[@Label]].
+
+    Update the roster here once and every template that references it follows —
+    the point is not re-typing (or re-editing) the same option list in every op
+    note. Deterministic client-side fill only; nothing here is sent to the AI.
+    """
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL,on_delete=models.CASCADE)
+    label = models.CharField(max_length=80)
+    options = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    class Meta:
+        ordering = [Lower('label')]
+        constraints = [models.UniqueConstraint(Lower('label'),'owner',name='one_shared_choice_per_label')]
 
 class CaseDraft(models.Model):
     """One opt-in, resumable working copy of an operative/procedure case draft.

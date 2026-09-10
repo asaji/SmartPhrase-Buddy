@@ -1,4 +1,4 @@
-import json
+import json, re
 from functools import wraps
 from django.conf import settings
 from django.core import signing
@@ -10,7 +10,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
 from django.db.models import Q
 from django.utils import timezone
-from .models import Template, Revision, PendingImport, CaseDraft
+from .models import Template, Revision, PendingImport, CaseDraft, SharedChoice
 from .services import normalize,serialize,snapshot,plain,propose,tokens,warnings
 
 @login_required
@@ -28,7 +28,7 @@ def api(methods):
                 data=json.loads(request.body) if request.body else {}
                 if not isinstance(data,dict): raise ValueError('Expected JSON object.')
                 return fn(request,data,*args,**kwargs)
-            except (Template.DoesNotExist,PendingImport.DoesNotExist,CaseDraft.DoesNotExist): return JsonResponse({'error':'Not found.'},status=404)
+            except (Template.DoesNotExist,PendingImport.DoesNotExist,CaseDraft.DoesNotExist,SharedChoice.DoesNotExist): return JsonResponse({'error':'Not found.'},status=404)
             except (ValueError,TypeError,KeyError,signing.BadSignature) as e: return JsonResponse({'error':str(e) if isinstance(e,ValueError) else 'Invalid request or expired review.'},status=400)
         return wrapped
     return deco
@@ -196,13 +196,16 @@ def export_data(request,data):
     items=[]
     for t in Template.objects.filter(owner=request.user):
         items.append(dict(serialize(t),revisions=list(t.revisions.order_by('version').values('version','snapshot','created_at'))))
-    response=JsonResponse({'format':'smartphrase-v1','items':items})
+    response=JsonResponse({'format':'smartphrase-v1','items':items,'shared_choices':shared_choices(request.user)})
     response['Content-Disposition']='attachment; filename="smartphrase-backup.json"'
     return response
 
 @api(['POST'])
 def import_data(request,data):
     if data.get('format')!='smartphrase-v1' or not isinstance(data.get('items'),list) or len(data['items'])>500: raise ValueError('Invalid backup (maximum 500 templates).')
+    shared=data.get('shared_choices',[])
+    if not isinstance(shared,list) or len(shared)>200: raise ValueError('Invalid shared_choices.')
+    shared=[normalize_choice(c) for c in shared]
     from django.utils.dateparse import parse_datetime
     def date(value):
         result=parse_datetime(value)
@@ -218,7 +221,9 @@ def import_data(request,data):
             for rev in revisions:
                 r=Revision.objects.create(template=t,version=rev['version'],snapshot=normalize(rev['snapshot']))
                 Revision.objects.filter(pk=r.pk).update(created_at=date(rev['created_at']))
-    return JsonResponse({'imported':len(data['items'])})
+        for label,options in shared:
+            SharedChoice.objects.update_or_create(owner=request.user,label__iexact=label,defaults={'label':label,'options':options})
+    return JsonResponse({'imported':len(data['items']),'shared_choices':len(shared)})
 
 def draft_row(d):
     return {'id':d.pk,'template_id':d.template_id,'template_title':d.template.title,'kind':d.kind,
@@ -261,11 +266,50 @@ def draft_item(request,data,pk):
         d.delete(); return JsonResponse({'ok':True})
     return JsonResponse(draft_full(d))
 
+# Account-level named option lists, referenced from any template as [[@Label]].
+CHOICE_LABEL_BANNED=set('@:|[]')
+
+def normalize_choice(data):
+    label=' '.join(str(data.get('label','')).split())[:80]
+    if not label: raise ValueError('A variable name is required.')
+    if CHOICE_LABEL_BANNED & set(label): raise ValueError('The name cannot contain @ : | [ or ].')
+    raw=data.get('options',[])
+    if isinstance(raw,str): raw=re.split(r'[|\n]',raw)
+    if not isinstance(raw,list): raise ValueError('Options must be a list or a | -separated string.')
+    options=[]
+    for o in raw:
+        o=' '.join(str(o).split())[:200]
+        if not o: continue
+        if set('|[]') & set(o): raise ValueError('An option cannot contain | [ or ].')
+        if o not in options: options.append(o)
+    if not 1<=len(options)<=30: raise ValueError('Give between 1 and 30 options.')
+    return label,options
+
+def choice_row(c):
+    return {'id':c.pk,'label':c.label,'options':c.options,'updated_at':c.updated_at.isoformat()}
+
+def shared_choices(user):
+    return [{'label':c.label,'options':c.options} for c in SharedChoice.objects.filter(owner=user)]
+
+@api(['GET','POST'])
+def choices(request,data):
+    if request.method=='POST':
+        label,options=normalize_choice(data)
+        c,_=SharedChoice.objects.update_or_create(owner=request.user,label__iexact=label,
+            defaults={'label':label,'options':options})
+        return JsonResponse(choice_row(c))
+    return JsonResponse({'items':[choice_row(c) for c in SharedChoice.objects.filter(owner=request.user)]})
+
+@api(['DELETE'])
+def choice_item(request,data,pk):
+    SharedChoice.objects.get(pk=pk,owner=request.user).delete()
+    return JsonResponse({'ok':True})
+
 @api(['GET'])
 def status(request,data):
     from .services import ai_configured, ai_base_url
     from urllib.parse import urlparse
-    return JsonResponse({'provider':settings.AI_PROVIDER,'model':settings.AI_MODEL,'endpoint':urlparse(ai_base_url()).netloc,'configured':ai_configured(),'username':request.user.username})
+    return JsonResponse({'provider':settings.AI_PROVIDER,'model':settings.AI_MODEL,'endpoint':urlparse(ai_base_url()).netloc,'configured':ai_configured(),'username':request.user.username,'shared_choices':shared_choices(request.user)})
 
 def pending_row(row):
     return {'id':row.pk,'name':row.name,'text':row.text,'html':row.html,'flags':row.flags,'chars':len(row.text),'source_name':row.source_name,'batch':row.batch,'order':row.order}

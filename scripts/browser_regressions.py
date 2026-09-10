@@ -4,7 +4,7 @@ from playwright.sync_api import sync_playwright, expect
 
 with synthetic_server() as base_url:
     from django.contrib.auth import get_user_model
-    from library.models import Template, Revision, PendingImport, CaseDraft
+    from library.models import Template, Revision, PendingImport, CaseDraft, SharedChoice
     from library.services import snapshot
     user=get_user_model().objects.create_user('regression',password='synthetic-test-password')
     def template(title,kind,content):
@@ -17,6 +17,7 @@ with synthetic_server() as base_url:
     removal=template('Removal regression','operative','<p>Keep <strong>this sentence</strong>. Device *** at *** location. Keep <em>this too</em>.</p>')
     reuse=template('Choice reuse regression','operative','<p>Planned approach: [[Approach: open | robotic | laparoscopic]].</p><p>The [[Approach]] technique was used throughout.</p><p>Specimen removed via the [[Approach]] port site.</p><p>Closure per [[Closure]] preference.</p>')
     formatted=template('Formatted regression','procedure','<p>Value <strong>**</strong>*.</p><p>[[Field: <strong>one</strong> | two]]</p><ul><li>Parent <strong>**</strong>*<ul><li>Child @TOKEN@</li></ul></li></ul>')
+    shared_asst=template('Shared assistant regression','operative','<p>Assisted by [[@Assistant]].</p><p>Closure performed with [[@Assistant]] at the bedside.</p><p>Drain ***.</p>')
     with sync_playwright() as p:
         browser=p.chromium.launch(channel='chrome',headless=True)
         page=browser.new_page();page.set_default_timeout(10000)
@@ -310,6 +311,40 @@ with synthetic_server() as base_url:
         expect(page.locator('#library-nav')).to_be_visible()
         assert CaseDraft.objects.filter(owner=user,template=operative).count()==0
         print('PASS: save case draft to account, resume from library preview, delete on finish')
+
+        # Shared choice variable: define the option list once in Settings, reference it
+        # in any template as [[@Assistant]]; the case editor fills every occurrence from
+        # one control, and editing the roster needs no template edit.
+        page.locator('#settings-nav').click()
+        page.locator('#new-choice-label').fill('Assistant')
+        page.locator('#new-choice-options').fill('James\nDavid\nTeresa')
+        page.locator('#add-choice').click()
+        expect(page.locator('#choice-list')).to_contain_text('Assistant')
+        assert SharedChoice.objects.filter(owner=user,label='Assistant').count()==1
+        editor=open_template(shared_asst)
+        expect(page.locator('#case-fields .pfield')).to_have_count(1)          # both [[@Assistant]] share one control
+        expect(page.locator('#case-fields')).to_contain_text('2×')
+        expect(page.locator('#case-fields')).to_contain_text('Shared list')
+        expect(page.locator('input[data-cm="0"]')).to_have_count(3)            # options from the shared list
+        check_case_field(0,'David');page.locator('#case-generate').click()
+        expect(editor).to_contain_text('Assisted by David.')
+        expect(editor).to_contain_text('with David at the bedside')
+        # Grow the roster in Settings; the template follows with no edit of its own.
+        page.locator('#settings-nav').click()
+        box=page.locator('#choice-list [data-choice]').first
+        box.locator('[data-copts]').fill('James\nDavid\nTeresa\nRavi')
+        box.locator('[data-save-choice]').click()
+        expect(page.locator('#notice')).to_contain_text('Saved')
+        editor=open_template(shared_asst)
+        expect(page.locator('input[data-cm="0"][value="Ravi"]')).to_have_count(1)
+        # Master editor: a resolved [[@Assistant]] does not warn; an unknown [[@X]] does.
+        editor=open_template(shared_asst,master=True)
+        expect(page.locator('#shared-ref')).to_contain_text('@Assistant')
+        expect(page.locator('#fixed-warning')).not_to_contain_text('Assistant')
+        editor.fill('Assisted by [[@Nonexistent]].')
+        expect(page.locator('#fixed-warning')).to_contain_text('does not exist')
+        shared_asst.refresh_from_db();assert shared_asst.version==1
+        print('PASS: shared choice variable resolves [[@Label]] from Settings across templates')
 
         assert not errors,errors
         assert page.evaluate('localStorage.length + sessionStorage.length')==0

@@ -57,10 +57,16 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   working copy per operative/procedure master (`CaseDraft`, 7-day expiry) so a
   case can be finished on another computer. Still open: keeping *finished*
   cases, and more than one saved variant per template.
+- [x] **Shared choice variables** — account-level named option lists
+  (`SharedChoice`, Settings editor), referenced from any template as
+  `[[@Label]]`; edit the list once and every template follows. Deterministic
+  client-side fill; in the JSON export/import. A local `[[Label: … ]]` still
+  overrides; an unresolved `[[@Label]]` degrades to a free-text field + warning.
 - [ ] **Reusable case-variation saving** — save a filled-in set of `[[ … ]]` /
   checklist answers as a named variant of a master.
-- [ ] **Shared-section propagation** — edit a shared block once and propagate to
-  every template that includes it.
+- [ ] **Shared-section propagation** — edit a shared *content block* once and
+  propagate to every template that includes it (distinct from the shared
+  *choice variables* above, which are option lists, not prose).
 - [ ] **Epic integration** — beyond manual copy/paste (token activation is
   currently unverified on paste).
 

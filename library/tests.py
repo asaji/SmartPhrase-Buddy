@@ -5,7 +5,7 @@ from django.test import TestCase, Client, override_settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.utils import timezone
-from .models import Template, Revision, PendingImport, CaseDraft
+from .models import Template, Revision, PendingImport, CaseDraft, SharedChoice
 from .services import tokens, clean, propose
 
 class Workflows(TestCase):
@@ -567,3 +567,57 @@ class CaseDrafts(TestCase):
     def test_portable_export_excludes_case_drafts(self):
         self.save({'template_id':self.op['id'],'content':'<p>secret working draft text</p>'})
         self.assertNotIn('secret working draft text',self.client.get('/api/export/').content.decode())
+
+
+class SharedChoices(TestCase):
+    """Account-level named option lists referenced from templates as [[@Label]]."""
+    def setUp(self):
+        cache.clear()
+        self.user=get_user_model().objects.create_user('owner',password='pw')
+        self.client.force_login(self.user)
+    def post(self,body):
+        return self.client.post('/api/choices/',data=json.dumps(body),content_type='application/json')
+
+    def test_create_list_upsert_delete(self):
+        r=self.post({'label':'  Assistant ','options':['James','David','Teresa']})
+        self.assertEqual(r.status_code,200,r.content)
+        self.assertEqual((r.json()['label'],r.json()['options']),('Assistant',['James','David','Teresa']))
+        # case-insensitive upsert: same row, new options, casing follows the last write
+        r2=self.post({'label':'assistant','options':'Ravi | Priya'})
+        self.assertEqual(r2.status_code,200,r2.content)
+        self.assertEqual(SharedChoice.objects.filter(owner=self.user).count(),1)
+        self.assertEqual((r2.json()['label'],r2.json()['options']),('assistant',['Ravi','Priya']))
+        rows=self.client.get('/api/choices/').json()['items']
+        self.assertEqual(len(rows),1)
+        self.assertEqual(self.client.delete('/api/choices/%d/'%rows[0]['id']).status_code,200)
+        self.assertEqual(SharedChoice.objects.count(),0)
+
+    def test_validation_and_normalization(self):
+        for bad in [{'label':'','options':['x']},{'label':'Bad:Name','options':['x']},
+                    {'label':'No@','options':['x']},{'label':'Assistant','options':[]},
+                    {'label':'Assistant','options':['a|b']},
+                    {'label':'Assistant','options':['opt%d'%i for i in range(31)]}]:
+            self.assertEqual(self.post(bad).status_code,400,bad)
+        r=self.post({'label':'  Lead   Attending ','options':['  A  ','A','','B']})
+        self.assertEqual(r.status_code,200,r.content)
+        self.assertEqual((r.json()['label'],r.json()['options']),('Lead Attending',['A','B']))  # collapsed, de-duped, blanks dropped
+
+    def test_owner_scoped_and_auth(self):
+        self.post({'label':'Assistant','options':['James']})
+        c=SharedChoice.objects.get()
+        other=Client(); other.force_login(get_user_model().objects.create_user('other',password='pw'))
+        self.assertEqual(other.get('/api/choices/').json()['items'],[])
+        self.assertEqual(other.delete('/api/choices/%d/'%c.pk).status_code,404)
+        self.assertEqual(Client().get('/api/choices/').status_code,401)
+        self.assertEqual(other.post('/api/choices/',data=json.dumps({'label':'Assistant','options':['Zed']}),content_type='application/json').status_code,200)  # same label, different owner
+
+    def test_status_export_import_roundtrip(self):
+        self.post({'label':'Assistant','options':['James','David']})
+        self.assertEqual(self.client.get('/api/status/').json()['shared_choices'],[{'label':'Assistant','options':['James','David']}])
+        dump=json.loads(self.client.get('/api/export/').content)
+        self.assertEqual(dump['shared_choices'],[{'label':'Assistant','options':['James','David']}])
+        other=Client(); other.force_login(get_user_model().objects.create_user('other',password='pw'))
+        r=other.post('/api/import/',data=json.dumps({'format':'smartphrase-v1','items':[],'shared_choices':dump['shared_choices']}),content_type='application/json')
+        self.assertEqual(r.status_code,200,r.content)
+        self.assertEqual(r.json()['shared_choices'],1)
+        self.assertEqual(SharedChoice.objects.filter(owner__username='other').count(),1)
