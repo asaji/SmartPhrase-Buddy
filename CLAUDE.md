@@ -99,8 +99,24 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
      templates, no per-template action needed.
   Bold itself has no plain-text equivalent and is not being faked with a
   marker (would collide with the `***` placeholder convention) — remains
-  unresolved by design. Still open: verification of token/SmartList
-  activation on paste, and testing in any other Epic field types (SmartPhrase
-  editor, other note sections) that might behave differently.
+  unresolved by design.
+  3. Pass 2 over-corrected in the other direction: the surgeon's own header
+     block (Surgeon/Assistant(s)/Anesthesia/Antibiotics/Fluids/Blood Loss/
+     Drains/Tubes/Grafts/Implants/Specimens, one `Label:` per line) also got a
+     blank line after every line, which he didn't want — Epic's own
+     administrative field block is meant to read tight. `text()` now
+     classifies each paragraph: a short `Label:` (≤2 words, e.g. `Procedure:`,
+     `Antibiotics:`) stays tight against its neighbors and against a bare
+     label's continuation line(s) (e.g. `Procedure:` + the CPT description
+     line(s), chained through further unlabeled lines until the next
+     label/heading closes it); a longer label (e.g. `Indication for
+     Procedure:`, `Description of Procedure:`, ≥3 words) is treated as a
+     section heading and always keeps blank-line spacing on both sides, same
+     as an actual heading tag. Confirmed against the surgeon's real header
+     block and the `Indication for Procedure:` transition — verified via a
+     standalone DOMPurify-only Playwright harness, not the full app UI.
+  Still open: verification of token/SmartList activation on paste, and
+  testing in any other Epic field types (SmartPhrase editor, other note
+  sections) that might behave differently.
 - [ ] **Multi-worker deployment** needs a shared login/AI rate limiter; the
   current in-process limiter only covers one Gunicorn worker.

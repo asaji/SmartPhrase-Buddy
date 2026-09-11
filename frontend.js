@@ -6,7 +6,30 @@ const $=s=>document.querySelector(s), app=$('#app');
 let editors=[],activeDraft=false,dirty=false,selected=new Set(),current=null,epoch=0;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const safe=s=>DOMPurify.sanitize(s,{ALLOWED_TAGS:['p','br','div','h1','h2','h3','h4','strong','b','em','i','u','ul','ol','li','blockquote'],ALLOWED_ATTR:[]});
-function text(html){const d=document.createElement('div');d.innerHTML=safe(html);d.querySelectorAll('li').forEach(x=>x.prepend('• '));d.querySelectorAll('br').forEach(x=>x.replaceWith('\n'));d.querySelectorAll('li').forEach(x=>x.append('\n'));d.querySelectorAll('p,div,h1,h2,h3,h4,blockquote,ul,ol').forEach(x=>x.append('\n\n'));return d.textContent.replace(/\n{3,}/g,'\n\n').trim();}
+function text(html){const d=document.createElement('div');d.innerHTML=safe(html);d.querySelectorAll('li').forEach(x=>x.prepend('• '));d.querySelectorAll('br').forEach(x=>x.replaceWith('\n'));d.querySelectorAll('li').forEach(x=>x.append('\n'));
+ // A short "Label:" (<=2 words, e.g. Procedure/Anesthesia/Antibiotics) stays tight
+ // to its neighbors, like Epic's own header block. A longer label (e.g. "Indication
+ // for Procedure:") is treated as a section heading and always gets blank-line
+ // spacing. A bare short label (nothing after the colon on its own line) also stays
+ // tight against the plain-text line(s) that follow it, since those are its value
+ // (e.g. "Procedure:" + the CPT line(s)) — that chain continues through further
+ // unlabeled lines until the next label/heading closes it.
+ const blocks=[...d.querySelectorAll('p,div,h1,h2,h3,h4,blockquote,ul,ol')];
+ let chain=false;
+ const compact=blocks.map(el=>{
+  const isP=el.tagName==='P';
+  const t=isP?el.textContent.trim():'';
+  const m=isP?t.match(LABEL_LINE):null;
+  const words=m?m[0].replace(/:\s*$/,'').trim().split(/\s+/).filter(Boolean).length:null;
+  const isShortLabel=words!==null&&words<=2;
+  const isList=isP&&LIST_LINE.test(el.textContent);
+  const bare=m&&t===m[0].trim();
+  const c=isShortLabel||isList||(isP&&words===null&&chain);
+  chain=c&&(isShortLabel?bare:true);
+  return c;
+ });
+ blocks.forEach((el,i)=>{el.append(blocks[i+1]&&compact[i]&&compact[i+1]?'\n':'\n\n');});
+ return d.textContent.replace(/\n{3,}/g,'\n\n').trim();}
 function tokenSet(html){return (text(html).match(/@[^@\s<>]+@|\{[^{}]*\}|\*{3,}/g)||[]).sort().join('\n');}
 function notify(s){$('#notice').textContent=s;}
 async function api(path,method='GET',body){const csrf=document.cookie.split('; ').find(x=>x.startsWith('csrftoken='))?.split('=')[1];const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json','X-CSRFToken':csrf||''},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});if(r.status===401){notify('Session expired. Your draft remains here; sign in in another tab, then retry.');throw Error('Login required.');}const result=await r.json();if(!r.ok)throw Error(result.error||'Request failed.');return result;}
