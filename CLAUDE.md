@@ -45,6 +45,23 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   wrapped lines** instead of relying on them knowing to click it. (Post-fix
   imports are already reflowed server-side; this is for pre-fix queue rows and
   manual pastes.)
+- [x] **Copy formatting help + live preview.** Settings has a new "Copy &
+  paste formatting" panel documenting the Epic-paste rules discovered above
+  (plain-text-only, no bold, reflow-then-spacing, tight vs. blank-line label
+  rules, manual blank-paragraph cleanup). Every editor with copy buttons
+  (library preview, master, case, procedure) now also has a **Preview Epic
+  paste** toggle showing exactly what `Copy plain text` will produce —
+  `text(reflowWrapped(html))`, the same pipeline `copy()` runs — via a shared
+  `previewButton()`/`previewBody()`/`wirePreviewToggle()` in `frontend.js`.
+  Live editors use `wirePreviewEditor(editor)`, which refreshes on a
+  `MutationObserver` over `editor.view.dom` rather than Tiptap's `onUpdate` —
+  `commands.setContent()` (Reflow, AI-improve accept, option fill, checklist
+  apply, etc.) doesn't fire `onUpdate` in this codebase (existing call sites
+  already manually re-derive state after it), but it does mutate the DOM, so
+  the observer catches every content change, typed or programmatic, without
+  needing to track down each `setContent` call site individually. The static
+  library-preview page uses the simpler `wirePreviewCopy(get)` (no live
+  editor to observe).
 
 ### Product
 
