@@ -62,11 +62,37 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   needing to track down each `setContent` call site individually. The static
   library-preview page uses the simpler `wirePreviewCopy(get)` (no live
   editor to observe).
+- [x] **Color-coded status bar.** `notify(msg, kind)` in `frontend.js` now
+  takes a `kind` (`'neutral'` default, `'success'`, `'error'`) and sets
+  `#notice`'s class instead of always rendering the same green regardless of
+  what happened. Green is reserved for **Copied** — the one moment the
+  narrative is actually ready to paste; every failure path (the generic
+  `action()` catch, `api()`'s 401, and the handful of standalone
+  `catch`/`.catch()` sites that weren't routed through `action()`) is red;
+  everything else (in-progress, "review before copying", MOCK-provider
+  notices, save confirmations) stays the neutral slate color. Surfaced from
+  real-world feedback (2026-09-18): the bar read as the same reassuring green
+  whether or not the note was actually safe to paste.
 
 ### Product
 
 - [ ] **Screenshot / OCR extraction** for image-only PDFs and screenshots
   (text-based Epic PDF export is done).
+- [ ] **Final narrative consistency check.** Real-world feedback (2026-09-18):
+  the existing grammar check reads the note line-by-line and won't catch
+  whole-note internal contradictions — the flagship example is a stent-
+  placement note in a female patient still referencing a prostatic urethra
+  (anatomy that's male-only), left over from a template originally written for
+  a male case. Needs a new AI call, separate from grammar, that reads the
+  *entire* finished narrative for self-consistency (sex/anatomy mismatches,
+  contradictory assertions elsewhere in the note, stale template leftovers)
+  and flags — never silently edits — what it finds, the same reviewed-diff-or-
+  list pattern as the rest of the app. Design decisions still open before
+  building: on-demand button (next to Grammar check) vs. required gate before
+  Copy is enabled; whether it reuses `finalize/`'s checklist plumbing or is a
+  new endpoint; cost/latency of a second full-note LLM call per copy; how
+  findings are surfaced (inline flags vs. a review list) without training
+  the surgeon to rubber-stamp yet another AI panel.
 - [ ] **Library-item evidence workflow.** `library` kind still just uses the
   master editor. Build: paste-your-own citations by default; opt-in
   AI-suggested citations, every one flagged *UNVERIFIED*.

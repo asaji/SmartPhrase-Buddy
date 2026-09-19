@@ -90,8 +90,11 @@ code{font-family:ui-monospace,Menlo,monospace;font-size:.92em;background:#eef2ec
 .hist-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .hist .actions{margin-top:5px}
 .hist-doc{margin-top:8px;border-top:1px solid #eef1ec;padding-top:8px;max-height:40vh;overflow:auto}
-#notice{position:sticky;top:0;z-index:10;background:#244f3e;color:white;padding:0 3vw}
+#notice{position:sticky;top:0;z-index:10;color:white;padding:0 3vw}
 #notice:not(:empty){padding:9px 3vw}
+#notice.notice-neutral{background:#39495a}
+#notice.notice-success{background:#1f7a4f}
+#notice.notice-error{background:#8a2e2e}
 footer{max-width:1440px;margin:28px auto;padding:0 3vw;color:#7b877f;font-size:11px}
 .auth{max-width:420px;margin:9vh auto;background:white;border:1px solid #dce2dc;border-radius:12px;padding:28px}
 .auth h1{font-size:31px}
