@@ -73,6 +73,17 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   notices, save confirmations) stays the neutral slate color. Surfaced from
   real-world feedback (2026-09-18): the bar read as the same reassuring green
   whether or not the note was actually safe to paste.
+- [x] **Arial for note text.** `.tiptap` (the live editor), `.document`
+  (read-only preview/history/diff), and `.check-ctx` (checklist context)
+  switched from Georgia to `Arial,Helvetica,sans-serif` in `style.css` — Epic's
+  own default note font, requested 2026-09-25 so what's edited/previewed
+  visually matches what lands in Epic. App chrome (Inter) is unaffected.
+- [x] **Denser library rows.** `.item` in `style.css` + the row template in
+  `library()` (`frontend.js`) — title and type now share one line instead of
+  stacking, tag badges cap at 3 with a "+N" overflow badge instead of wrapping
+  freely, and padding/margin tightened. Addresses "10+ notes gets cumbersome"
+  (2026-09-25) without adding grouping/pagination, since search/filter already
+  covers finding a specific phrase.
 
 ### Product
 
@@ -107,9 +118,20 @@ the repo. Machine-specific local/deploy notes live in `CLAUDE.local.md`
   overrides; an unresolved `[[@Label]]` degrades to a free-text field + warning.
 - [ ] **Reusable case-variation saving** — save a filled-in set of `[[ … ]]` /
   checklist answers as a named variant of a master.
-- [ ] **Shared-section propagation** — edit a shared *content block* once and
-  propagate to every template that includes it (distinct from the shared
-  *choice variables* above, which are option lists, not prose).
+- [x] **Phrase-insert markers** — `[[#Title or Epic name]]` in a master
+  template, resolved by a new **Insert referenced phrases** button (next to
+  Reflow) that copies a *one-time snapshot* of another saved phrase's current
+  content in place of the marker (rich HTML when the marker is a whole
+  paragraph, plain text inline). Deliberately the simpler of the two options
+  discussed for "import phrases" (2026-09-25) — not a live link, so editing
+  the source afterward doesn't change notes that already inserted it.
+  Master-template editing only, purely client-side. See [[phrase-insert-markers]].
+- [ ] **Shared-section propagation** — the other, harder option from that
+  same discussion: edit a shared *content block* once and have it propagate
+  live to every template that includes it (distinct from the shared *choice
+  variables* above, which are option lists, not prose, and from the one-time
+  phrase-insert markers above, which snapshot rather than stay linked). Still
+  open — would need versioning/recursion-limit decisions before building.
 - [ ] **Epic integration** — beyond manual copy/paste (token activation is
   currently unverified on paste).
 
